@@ -8,12 +8,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import android.content.Context  // explicit import for Context
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // Use the theme defined in themes.xml
             androidx.compose.material3.MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     InkEngineView()
@@ -25,15 +25,16 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun InkEngineView() {
-    AndroidView(
+    // Explicitly specify type arguments to help inference
+    AndroidView<MyGLSurfaceView>(
         modifier = Modifier.fillMaxSize(),
-        factory = { context ->
+        factory = { context: Context ->
             MyGLSurfaceView(context).apply {
-                // You can pass a reference of this view to a ViewModel if needed
+                // optional setup
             }
         },
-        update = { view ->
-            // Update logic here when state changes
+        update = { view: MyGLSurfaceView ->
+            // called when the view needs to update (e.g., recomposition)
         }
     )
 }

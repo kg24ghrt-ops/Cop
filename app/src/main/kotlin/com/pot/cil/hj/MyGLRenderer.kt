@@ -12,19 +12,16 @@ import javax.microedition.khronos.opengles.GL10
 
 class MyGLRenderer : GLSurfaceView.Renderer {
 
-    // Fullscreen quad vertices: X, Y, U, V
     private val quadVertices = floatArrayOf(
-        // Positions   // Texture Coords
-        -1.0f,  1.0f,  0.0f, 0.0f, // Top-left
-        -1.0f, -1.0f,  0.0f, 1.0f, // Bottom-left
-         1.0f,  1.0f,  1.0f, 0.0f, // Top-right
-         1.0f, -1.0f,  1.0f, 1.0f  // Bottom-right
+        -1.0f,  1.0f,  0.0f, 0.0f,
+        -1.0f, -1.0f,  0.0f, 1.0f,
+         1.0f,  1.0f,  1.0f, 0.0f,
+         1.0f, -1.0f,  1.0f, 1.0f
     )
     private lateinit var vertexBuffer: FloatBuffer
     private var programId = 0
     private var textureId = 0
 
-    // Shader source code (GLSL 320 ES)
     private val vertexShaderCode = """
         #version 320 es
         layout(location = 0) in vec4 aPosition;
@@ -42,25 +39,15 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         in vec2 vTexCoord;
         out vec4 outColor;
         uniform sampler2D uTexture;
-
-        // ==========================================
-        // PLACE YOUR "INK ENGINE" SHADER MAGIC HERE
-        // ==========================================
         void main() {
             vec4 color = texture(uTexture, vTexCoord);
-            // Example: Invert colors for a "negative ink" effect
-            // outColor = vec4(1.0 - color.rgb, color.a);
-            
-            // Default: Pass through
-            outColor = color;
+            outColor = color;  // placeholder – replace with your ink effect
         }
     """.trimIndent()
 
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
-        // Set clear color (deep dark gray for contrast)
         GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
 
-        // 1. Compile Shaders
         val vertexShader = loadShader(GLES32.GL_VERTEX_SHADER, vertexShaderCode)
         val fragmentShader = loadShader(GLES32.GL_FRAGMENT_SHADER, fragmentShaderCode)
         programId = GLES32.glCreateProgram().also {
@@ -69,13 +56,11 @@ class MyGLRenderer : GLSurfaceView.Renderer {
             GLES32.glLinkProgram(it)
         }
 
-        // 2. Setup Vertex Buffer
         vertexBuffer = ByteBuffer.allocateDirect(quadVertices.size * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
             .apply { put(quadVertices).position(0) }
 
-        // 3. Generate a dummy texture (replace with your rendered Android text later)
         textureId = generateDummyTexture()
     }
 
@@ -86,15 +71,12 @@ class MyGLRenderer : GLSurfaceView.Renderer {
     override fun onDrawFrame(unused: GL10?) {
         GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
 
-        // Use our shader program
         GLES32.glUseProgram(programId)
 
-        // Bind texture
         GLES32.glActiveTexture(GLES32.GL_TEXTURE0)
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textureId)
         GLES32.glUniform1i(GLES32.glGetUniformLocation(programId, "uTexture"), 0)
 
-        // Enable vertex attributes
         GLES32.glEnableVertexAttribArray(0)
         GLES32.glEnableVertexAttribArray(1)
         vertexBuffer.position(0)
@@ -102,15 +84,12 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         vertexBuffer.position(2)
         GLES32.glVertexAttribPointer(1, 2, GLES32.GL_FLOAT, false, 16, vertexBuffer)
 
-        // Draw fullscreen quad
         GLES32.glDrawArrays(GLES32.GL_TRIANGLE_STRIP, 0, 4)
 
-        // Disable attributes
         GLES32.glDisableVertexAttribArray(0)
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ----- Helper: Shader Compiler -----
     private fun loadShader(type: Int, shaderCode: String): Int {
         return GLES32.glCreateShader(type).also { shader ->
             GLES32.glShaderSource(shader, shaderCode)
@@ -124,9 +103,8 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         }
     }
 
-    // ----- Helper: Dummy Texture (Replace with your rendered text Bitmap) -----
+    // ----- FIXED texture generation -----
     private fun generateDummyTexture(): Int {
-        // Create a simple 256x256 gradient texture for testing
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bitmap)
         val paint = android.graphics.Paint().apply {
@@ -137,16 +115,21 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         canvas.drawText("Ink Engine", 20f, 120f, paint)
         canvas.drawText("GLES 3.2", 20f, 180f, paint)
 
-        return GLES32.glGenTextures(1, intArrayOf(0), 0).also { id ->
-            GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, id)
-            GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
-            GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
-            GLUtils.texImage2D(GLES32.GL_TEXTURE_2D, 0, bitmap, 0)
-            bitmap.recycle()
-        }
+        // Proper way to generate a texture ID
+        val textureIds = IntArray(1)
+        GLES32.glGenTextures(1, textureIds, 0)
+        val id = textureIds[0]
+
+        GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, id)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
+        GLUtils.texImage2D(GLES32.GL_TEXTURE_2D, 0, bitmap, 0)
+        bitmap.recycle()
+
+        return id
     }
 
-    // Public function to update texture with a new Bitmap (e.g., from Android Canvas)
+    // Optional: method to update texture from outside
     fun updateTexture(newBitmap: Bitmap) {
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textureId)
         GLUtils.texImage2D(GLES32.GL_TEXTURE_2D, 0, newBitmap, 0)

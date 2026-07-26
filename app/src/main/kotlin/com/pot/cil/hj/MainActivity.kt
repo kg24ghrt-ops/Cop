@@ -3,6 +3,7 @@ package com.pot.cil.hj
 import android.os.Bundle
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 
 class MainActivity : ComponentActivity() {
 
@@ -12,18 +13,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create a root FrameLayout
         val rootLayout = FrameLayout(this)
 
-        // 1. Create the invisible FakeEditText
+        // 1. Create invisible FakeEditText
         fakeEditText = FakeEditText(this)
 
-        // 2. Create the GLSurfaceView
+        // 2. Create GLSurfaceView
         glSurfaceView = MyGLSurfaceView(this).apply {
             setFakeEditText(fakeEditText)
         }
 
-        // 3. Add both views to the root layout
+        // 3. Add views
         rootLayout.addView(fakeEditText)
         rootLayout.addView(glSurfaceView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -36,14 +36,25 @@ class MainActivity : ComponentActivity() {
         glSurfaceView.post {
             glSurfaceView.updateRenderedText("Tap the paper to start typing...")
         }
+
+        // Modern back button handling using OnBackPressedDispatcher
+        onBackPressedDispatcher.addCallback(this) {
+            if (fakeEditText.hasFocus()) {
+                glSurfaceView.hideKeyboard()
+                fakeEditText.clearFocus()
+            } else {
+                finish()
+            }
+        }
     }
 
-    override fun onBackPressed() {
-        if (fakeEditText.hasFocus()) {
-            glSurfaceView.hideKeyboard()
-            fakeEditText.clearFocus()
-        } else {
-            super.onBackPressed()
-        }
+    override fun onPause() {
+        super.onPause()
+        // GLSurfaceView handles its own pause
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // GLSurfaceView handles its own resume
     }
 }

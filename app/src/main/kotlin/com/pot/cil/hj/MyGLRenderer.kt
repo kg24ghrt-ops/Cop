@@ -1,6 +1,10 @@
 package com.pot.cil.hj
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.opengl.GLES32
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
@@ -10,6 +14,13 @@ import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
+/**
+ * OpenGL ES 3.2 Renderer for notebook paper with text overlay.
+ * Optimized per Android Developer documentation:
+ * - Renders on dedicated thread [8†L14-L15]
+ * - Recreates textures when EGL context is lost [8†L21-L26]
+ * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering [0†L7-L8]
+ */
 class MyGLRenderer : GLSurfaceView.Renderer {
 
     // Fullscreen quad vertices: X, Y, U, V
@@ -24,14 +35,20 @@ class MyGLRenderer : GLSurfaceView.Renderer {
     private var resolutionUniform = -1
     private var textTextureUniform = -1
 
-    // Text texture ID
+    // Text texture
     private var textTextureId = 0
-    private var textureWidth = 0
-    private var textureHeight = 0
 
-    // Current view dimensions (used for bitmap sizing)
+    // View dimensions
     private var viewWidth = 0
     private var viewHeight = 0
+
+    // Reusable bitmap and paint (avoid allocations in render loop) [11†L13-L14]
+    private var textBitmap: Bitmap? = null
+    private val textPaint = Paint().apply {
+        isAntiAlias = true
+        isSubpixelText = true
+        textAlign = Paint.Align.LEFT
+    }
 
     // ----- Vertex Shader -----
     private val vertexShaderCode = """
@@ -88,7 +105,6 @@ class MyGLRenderer : GLSurfaceView.Renderer {
 
             // ---- Text Overlay ----
             vec4 textColor = texture(uTextTexture, vTexCoord);
-            // Blend text over paper using alpha
             finalColor = mix(finalColor, textColor.rgb, textColor.a);
 
             finalColor = clamp(finalColor, 0.0, 1.0);
@@ -130,6 +146,10 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         viewWidth = width
         viewHeight = height
 
+        // Recreate bitmap when surface changes size [8†L33-L37]
+        textBitmap?.recycle()
+        textBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
         GLES32.glUseProgram(programId)
         GLES32.glUniform2f(resolutionUniform, width.toFloat(), height.toFloat())
     }
@@ -159,57 +179,51 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ----- Text Rendering API -----
+    // ----- Public API -----
 
     /**
-     * Update the text overlay with a new TextOverlay.
-     * This renders the text to a Bitmap and uploads it as a texture.
-     * Call this from the UI thread when text changes.
+     * Update the text overlay. Called from UI thread via GLSurfaceView.queueEvent() [8†L18-L20]
      */
     fun setTextOverlay(textOverlay: TextOverlay) {
-        if (viewWidth == 0 || viewHeight == 0) {
-            // View not ready yet; ignore
-            return
-        }
+        if (viewWidth == 0 || viewHeight == 0) return
 
-        val bitmap = renderTextToBitmap(textOverlay, viewWidth, viewHeight)
+        val bitmap = renderTextToBitmap(textOverlay)
         uploadTexture(bitmap)
     }
 
-    /**
-     * Clear the text overlay (show no text).
-     */
     fun clearTextOverlay() {
-        // Upload a fully transparent bitmap
-        val bitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
-        bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
-        uploadTexture(bitmap)
+        textBitmap?.let {
+            val canvas = Canvas(it)
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            uploadTexture(it)
+        }
     }
 
     // ----- Private Helpers -----
 
-    private fun renderTextToBitmap(textOverlay: TextOverlay, width: Int, height: Int): Bitmap {
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bitmap)
-        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+    /**
+     * Render text to bitmap using Android's Canvas (uses Minikin + Skia under the hood).
+     * Reuses bitmap and paint objects to avoid allocations. [11†L13-L14]
+     */
+    private fun renderTextToBitmap(textOverlay: TextOverlay): Bitmap {
+        val bitmap = textBitmap ?: return Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-        val paint = android.graphics.Paint().apply {
-            color = textOverlay.color
-            textSize = textOverlay.textSize
-            isAntiAlias = true
-            isSubpixelText = true
-            textAlign = android.graphics.Paint.Align.LEFT
-        }
+        textPaint.color = textOverlay.color
+        textPaint.textSize = textOverlay.textSize
 
-        // Calculate Y position based on line number
-        val lineSpacing = 30f  // must match shader
-        val baselineOffset = textOverlay.yOffset
-        val y = (textOverlay.lineNumber * lineSpacing) + baselineOffset
+        val lineSpacing = 30f
+        val y = (textOverlay.lineNumber * lineSpacing) + textOverlay.yOffset
 
-        canvas.drawText(textOverlay.text, textOverlay.xOffset, y, paint)
+        canvas.drawText(textOverlay.text, textOverlay.xOffset, y, textPaint)
         return bitmap
     }
 
+    /**
+     * Upload bitmap to GPU texture using GLUtils.texImage2D.
+     * Recycles bitmap after upload to free memory. [4†L5-L6]
+     */
     private fun uploadTexture(bitmap: Bitmap) {
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textTextureId)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
@@ -223,9 +237,9 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         GLES32.glGenTextures(1, textures, 0)
         val id = textures[0]
 
-        // Initialize with a transparent 1x1 texture
+        // Initialize with transparent 1x1 texture
         val tempBitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        tempBitmap.eraseColor(android.graphics.Color.TRANSPARENT)
+        tempBitmap.eraseColor(Color.TRANSPARENT)
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, id)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)

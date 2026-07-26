@@ -9,8 +9,8 @@ import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 
 /**
- * Invisible EditText that acts as a bridge between the Android keyboard
- * and the OpenGL renderer. It captures text input and forwards it via a callback.
+ * Invisible EditText that bridges Android keyboard input to the OpenGL renderer.
+ * Uses a TextWatcher to forward text changes in real-time.
  */
 class FakeEditText(context: Context, attrs: AttributeSet? = null) : EditText(context, attrs) {
 
@@ -21,7 +21,6 @@ class FakeEditText(context: Context, attrs: AttributeSet? = null) : EditText(con
         isCursorVisible = false
         setBackgroundResource(android.R.color.transparent)
         setPadding(0, 0, 0, 0)
-        // ✅ Fixed: use fully qualified ViewGroup.LayoutParams
         layoutParams = ViewGroup.LayoutParams(1, 1)
 
         // Configure for text input, disable full-screen mode
@@ -38,12 +37,10 @@ class FakeEditText(context: Context, attrs: AttributeSet? = null) : EditText(con
         })
     }
 
-    /** Set a callback that receives the current text whenever it changes. */
     fun setOnTextChangeListener(listener: (String) -> Unit) {
         this.textChangeListener = listener
     }
 
-    /** Clear the text programmatically. */
     fun clearText() {
         setText("")
     }

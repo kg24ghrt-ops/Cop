@@ -10,8 +10,8 @@ import android.view.inputmethod.InputMethodManager
 /**
  * GLSurfaceView that hosts the notebook paper renderer.
  * Optimized per Android Developer documentation:
- * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering [0†L7-L8]
- * - Manages EGL context and rendering thread [7†L15-L20]
+ * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering
+ * - Manages EGL context and rendering thread [8†L15-L20]
  * - Handles touch events to show keyboard
  */
 class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
@@ -27,12 +27,12 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     init {
         setEGLContextClientVersion(3)
 
-        // Configure EGL for optimal performance [10†L18-L22]
+        // Configure EGL for optimal performance
         setEGLConfigChooser(8, 8, 8, 8, 16, 0)
 
         setRenderer(renderer)
 
-        // CRITICAL PERFORMANCE: Render only when needed [0†L7-L8][7†L19-L20]
+        // CRITICAL PERFORMANCE: Render only when needed
         renderMode = RENDERMODE_WHEN_DIRTY
 
         isFocusableInTouchMode = true
@@ -57,11 +57,11 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
             yOffset = 30f
         )
 
-        // Use queueEvent for thread-safe communication with renderer [8†L18-L20]
+        // Use queueEvent for thread-safe communication with renderer [9†L13-L15]
         queueEvent {
             renderer.setTextOverlay(textOverlay)
         }
-        requestRender() // Trigger redraw since we're in WHEN_DIRTY mode
+        requestRender()
     }
 
     fun clearRenderedText() {
@@ -96,11 +96,19 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     }
 
     /**
-     * Called when activity resumes - EGL context may have been lost. [8†L21-L26]
-     * The renderer handles recreation in onSurfaceCreated.
+     * Called when activity pauses - EGL context may be lost [2†L9-L10]
+     */
+    override fun onPause() {
+        renderer.onPause()
+        super.onPause()
+    }
+
+    /**
+     * Called when activity resumes - EGL context restored [9†L16-L25]
      */
     override fun onResume() {
         super.onResume()
+        renderer.onResume()
         // Restore text if needed
         if (currentText.isNotEmpty()) {
             updateRenderedText(currentText)

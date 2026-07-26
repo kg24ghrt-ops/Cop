@@ -11,15 +11,16 @@ import android.opengl.GLUtils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /**
  * OpenGL ES 3.2 Renderer for notebook paper with text overlay.
  * Optimized per Android Developer documentation:
- * - Renders on dedicated thread [8†L14-L15]
- * - Recreates textures when EGL context is lost [8†L21-L26]
- * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering [0†L7-L8]
+ * - Renders on dedicated thread [8†L18-L19]
+ * - Recreates textures when EGL context is lost [9†L16-L25]
+ * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering
  */
 class MyGLRenderer : GLSurfaceView.Renderer {
 
@@ -39,16 +40,27 @@ class MyGLRenderer : GLSurfaceView.Renderer {
     private var textTextureId = 0
 
     // View dimensions
+    @Volatile
     private var viewWidth = 0
+    @Volatile
     private var viewHeight = 0
 
-    // Reusable bitmap and paint (avoid allocations in render loop) [11†L13-L14]
+    // Reusable bitmap - protected by synchronized lock
     private var textBitmap: Bitmap? = null
+    private val bitmapLock = Any()
+    private val isBitmapValid = AtomicBoolean(false)
+
+    // Reusable paint (avoid allocations in render loop)
     private val textPaint = Paint().apply {
         isAntiAlias = true
         isSubpixelText = true
         textAlign = Paint.Align.LEFT
     }
+
+    // Current text overlay state
+    @Volatile
+    private var pendingTextOverlay: TextOverlay? = null
+    private val renderLock = Any()
 
     // ----- Vertex Shader -----
     private val vertexShaderCode = """
@@ -137,8 +149,13 @@ class MyGLRenderer : GLSurfaceView.Renderer {
             .asFloatBuffer()
             .apply { put(quadVertices).position(0) }
 
-        // Generate texture for text overlay
+        // Generate texture for text overlay (EGL context created/recreated here) [9†L16-L25]
         textTextureId = generateTextTexture()
+
+        // Re-render any pending text overlay
+        pendingTextOverlay?.let { overlay ->
+            renderTextToBitmapInternal(overlay)
+        }
     }
 
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
@@ -146,12 +163,22 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         viewWidth = width
         viewHeight = height
 
-        // Recreate bitmap when surface changes size [8†L33-L37]
-        textBitmap?.recycle()
-        textBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        // Recreate bitmap when surface changes size
+        synchronized(bitmapLock) {
+            textBitmap?.let { 
+                if (!it.isRecycled) it.recycle() 
+            }
+            textBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            isBitmapValid.set(true)
+        }
 
         GLES32.glUseProgram(programId)
         GLES32.glUniform2f(resolutionUniform, width.toFloat(), height.toFloat())
+
+        // Re-render any pending text overlay with new bitmap size
+        pendingTextOverlay?.let { overlay ->
+            renderTextToBitmapInternal(overlay)
+        }
     }
 
     override fun onDrawFrame(unused: GL10?) {
@@ -179,57 +206,112 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ----- Public API -----
+    // ----- Public API (Thread-safe) -----
 
     /**
-     * Update the text overlay. Called from UI thread via GLSurfaceView.queueEvent() [8†L18-L20]
+     * Update the text overlay. Called from UI thread via GLSurfaceView.queueEvent() [9†L13-L15]
      */
     fun setTextOverlay(textOverlay: TextOverlay) {
-        if (viewWidth == 0 || viewHeight == 0) return
-
-        val bitmap = renderTextToBitmap(textOverlay)
-        uploadTexture(bitmap)
+        if (viewWidth == 0 || viewHeight == 0) {
+            // Store for later when surface is ready
+            pendingTextOverlay = textOverlay
+            return
+        }
+        pendingTextOverlay = textOverlay
+        renderTextToBitmapInternal(textOverlay)
     }
 
     fun clearTextOverlay() {
-        textBitmap?.let {
-            val canvas = Canvas(it)
-            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-            uploadTexture(it)
+        pendingTextOverlay = null
+        synchronized(bitmapLock) {
+            if (!isBitmapValid.get()) return
+            textBitmap?.let { bitmap ->
+                if (!bitmap.isRecycled) {
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                    uploadTexture(bitmap)
+                }
+            }
         }
+    }
+
+    /**
+     * Called when activity pauses - EGL context may be lost [2†L9-L10]
+     * Mark bitmap as invalid so it will be recreated.
+     */
+    fun onPause() {
+        isBitmapValid.set(false)
+    }
+
+    /**
+     * Called when activity resumes - EGL context restored [9†L16-L25]
+     */
+    fun onResume() {
+        // Bitmap will be recreated in onSurfaceChanged
+        // Pending text will be re-rendered there
     }
 
     // ----- Private Helpers -----
 
     /**
      * Render text to bitmap using Android's Canvas (uses Minikin + Skia under the hood).
-     * Reuses bitmap and paint objects to avoid allocations. [11†L13-L14]
+     * Thread-safe: uses synchronized lock on bitmapLock.
      */
-    private fun renderTextToBitmap(textOverlay: TextOverlay): Bitmap {
-        val bitmap = textBitmap ?: return Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    private fun renderTextToBitmapInternal(textOverlay: TextOverlay) {
+        synchronized(bitmapLock) {
+            if (!isBitmapValid.get()) {
+                // Bitmap not ready, skip
+                return
+            }
 
-        textPaint.color = textOverlay.color
-        textPaint.textSize = textOverlay.textSize
+            val bitmap = textBitmap
+            if (bitmap == null || bitmap.isRecycled) {
+                // Bitmap was recycled, recreate it
+                if (viewWidth > 0 && viewHeight > 0) {
+                    textBitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
+                    isBitmapValid.set(true)
+                } else {
+                    return
+                }
+            }
 
-        val lineSpacing = 30f
-        val y = (textOverlay.lineNumber * lineSpacing) + textOverlay.yOffset
+            val currentBitmap = textBitmap ?: return
+            if (currentBitmap.isRecycled) {
+                isBitmapValid.set(false)
+                return
+            }
 
-        canvas.drawText(textOverlay.text, textOverlay.xOffset, y, textPaint)
-        return bitmap
+            val canvas = Canvas(currentBitmap)
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+            textPaint.color = textOverlay.color
+            textPaint.textSize = textOverlay.textSize
+
+            val lineSpacing = 30f
+            val y = (textOverlay.lineNumber * lineSpacing) + textOverlay.yOffset
+
+            canvas.drawText(textOverlay.text, textOverlay.xOffset, y, textPaint)
+
+            // Upload to GPU - DO NOT recycle bitmap here [3†L10-L11]
+            uploadTexture(currentBitmap)
+        }
     }
 
     /**
      * Upload bitmap to GPU texture using GLUtils.texImage2D.
-     * Recycles bitmap after upload to free memory. [4†L5-L6]
+     * IMPORTANT: Does NOT recycle the bitmap - lifecycle managed separately [7†L30-L35]
      */
     private fun uploadTexture(bitmap: Bitmap) {
+        if (bitmap.isRecycled) {
+            return
+        }
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textTextureId)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
         GLUtils.texImage2D(GLES32.GL_TEXTURE_2D, 0, bitmap, 0)
-        bitmap.recycle()
+        // CRITICAL: Do NOT call bitmap.recycle() here!
+        // The bitmap is reused for future renders. Recycling would cause
+        // "Canvas: trying to use a recycled bitmap" error [0†L10-L12]
     }
 
     private fun generateTextTexture(): Int {
@@ -244,7 +326,7 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
         GLUtils.texImage2D(GLES32.GL_TEXTURE_2D, 0, tempBitmap, 0)
-        tempBitmap.recycle()
+        tempBitmap.recycle() // Safe to recycle this one - it's not reused
         return id
     }
 

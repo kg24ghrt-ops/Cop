@@ -50,11 +50,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        // GLSurfaceView handles its own pause
+        glSurfaceView.onPause() // CRITICAL: Notify GLSurfaceView of pause [2†L9-L10]
     }
 
     override fun onResume() {
         super.onResume()
-        // GLSurfaceView handles its own resume
+        glSurfaceView.onResume() // CRITICAL: Notify GLSurfaceView of resume
     }
 }

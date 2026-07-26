@@ -1,52 +1,51 @@
 package com.pot.cil.hj
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var glSurfaceView: MyGLSurfaceView
+    private lateinit var fakeEditText: FakeEditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    InkEngineView()
-                }
-            }
+
+        // Create a root FrameLayout
+        val rootLayout = FrameLayout(this)
+
+        // 1. Create the invisible FakeEditText
+        fakeEditText = FakeEditText(this)
+
+        // 2. Create the GLSurfaceView
+        glSurfaceView = MyGLSurfaceView(this).apply {
+            // Pass the fake edit text to the surface view
+            setFakeEditText(fakeEditText)
+        }
+
+        // 3. Add both views to the root layout
+        rootLayout.addView(fakeEditText)
+        rootLayout.addView(glSurfaceView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        setContentView(rootLayout)
+
+        // Optionally set an initial hint text
+        glSurfaceView.post {
+            glSurfaceView.updateRenderedText("Tap the paper to start typing...")
         }
     }
 
-    @Composable
-    fun InkEngineView() {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                MyGLSurfaceView(context).apply {
-                    // Post to the view's message queue to ensure it's fully laid out
-                    post {
-                        val sampleText = TextOverlay(
-                            text = "Hello, Notebook!",
-                            lineNumber = 3,
-                            textSize = 40f,
-                            color = android.graphics.Color.BLACK,
-                            xOffset = 20f,
-                            yOffset = 20f
-                        )
-                        setTextOverlay(sampleText)
-                    }
-                }
-            },
-            update = { view ->
-                // Called when the view is updated (e.g., recomposition)
-                // You can optionally update the text here based on state
-            }
-        )
+    // You may want to handle back button to hide keyboard
+    override fun onBackPressed() {
+        if (fakeEditText.hasFocus()) {
+            glSurfaceView.hideKeyboard()
+            fakeEditText.clearFocus()
+        } else {
+            super.onBackPressed()
+        }
     }
 }

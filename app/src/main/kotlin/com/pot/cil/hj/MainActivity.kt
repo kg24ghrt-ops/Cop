@@ -12,19 +12,14 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create a root FrameLayout
         val rootLayout = FrameLayout(this)
 
-        // 1. Create the invisible FakeEditText
         fakeEditText = FakeEditText(this)
 
-        // 2. Create the GLSurfaceView
         glSurfaceView = MyGLSurfaceView(this).apply {
-            // Pass the fake edit text to the surface view
             setFakeEditText(fakeEditText)
         }
 
-        // 3. Add both views to the root layout
         rootLayout.addView(fakeEditText)
         rootLayout.addView(glSurfaceView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -33,13 +28,11 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(rootLayout)
 
-        // Optionally set an initial hint text
         glSurfaceView.post {
-            glSurfaceView.updateRenderedText("Tap the paper to start typing...")
+            glSurfaceView.updateRenderedText("Tap the paper to type...")
         }
     }
 
-    // You may want to handle back button to hide keyboard
     override fun onBackPressed() {
         if (fakeEditText.hasFocus()) {
             glSurfaceView.hideKeyboard()

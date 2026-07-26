@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.AttributeSet
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 
@@ -20,7 +21,8 @@ class FakeEditText(context: Context, attrs: AttributeSet? = null) : EditText(con
         isCursorVisible = false
         setBackgroundResource(android.R.color.transparent)
         setPadding(0, 0, 0, 0)
-        layoutParams = LayoutParams(1, 1) // tiny size
+        // ✅ Fixed: use fully qualified ViewGroup.LayoutParams
+        layoutParams = ViewGroup.LayoutParams(1, 1)
 
         // Configure for text input, disable full-screen mode
         inputType = EditorInfo.TYPE_CLASS_TEXT

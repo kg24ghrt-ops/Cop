@@ -2,9 +2,9 @@ package com.pot.cil.hj
 
 import android.os.Bundle
 import android.widget.FrameLayout
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
     private lateinit var glSurfaceView: MyGLSurfaceView
     private lateinit var fakeEditText: FakeEditText
@@ -20,7 +20,6 @@ class MainActivity : AppCompatActivity() {
 
         // 2. Create the GLSurfaceView
         glSurfaceView = MyGLSurfaceView(this).apply {
-            // Pass the fake edit text to the surface view
             setFakeEditText(fakeEditText)
         }
 
@@ -33,13 +32,12 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(rootLayout)
 
-        // Optionally set an initial hint text
+        // Set initial hint text
         glSurfaceView.post {
             glSurfaceView.updateRenderedText("Tap the paper to start typing...")
         }
     }
 
-    // You may want to handle back button to hide keyboard
     override fun onBackPressed() {
         if (fakeEditText.hasFocus()) {
             glSurfaceView.hideKeyboard()

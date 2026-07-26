@@ -12,18 +12,16 @@ class MyGLRenderer : GLSurfaceView.Renderer {
 
     // Fullscreen quad vertices: X, Y, U, V
     private val quadVertices = floatArrayOf(
-        -1.0f,  1.0f,  0.0f, 0.0f, // top-left
-        -1.0f, -1.0f,  0.0f, 1.0f, // bottom-left
-         1.0f,  1.0f,  1.0f, 0.0f, // top-right
-         1.0f, -1.0f,  1.0f, 1.0f  // bottom-right
+        -1.0f,  1.0f,  0.0f, 0.0f,
+        -1.0f, -1.0f,  0.0f, 1.0f,
+         1.0f,  1.0f,  1.0f, 0.0f,
+         1.0f, -1.0f,  1.0f, 1.0f
     )
     private lateinit var vertexBuffer: FloatBuffer
     private var programId = 0
-
-    // Uniform location for resolution
     private var resolutionUniform = -1
 
-    // ----- Vertex Shader (unchanged) -----
+    // ----- Vertex Shader -----
     private val vertexShaderCode = """
         #version 320 es
         layout(location = 0) in vec4 aPosition;
@@ -35,7 +33,7 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ----- FRAGMENT SHADER: Procedural Lined Paper -----
+    // ----- FRAGMENT SHADER: Realistic Notebook Paper -----
     private val fragmentShaderCode = """
         #version 320 es
         precision highp float;
@@ -43,52 +41,61 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         in vec2 vTexCoord;
         out vec4 outColor;
 
-        uniform vec2 uResolution;   // screen size in pixels
-
-        // Pseudo-random function for grain and blemishes
-        float hash(vec2 p) {
-            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-        }
+        uniform vec2 uResolution;
 
         void main() {
             // Convert to pixel coordinates
             vec2 pixelCoord = vTexCoord * uResolution;
 
-            // ---- 1. Paper background (warm off-white) ----
+            // ---- 1. Paper Background ----
+            // Standard off-white/cream paper color
             vec3 paperColor = vec3(0.98, 0.96, 0.90);
 
-            // ---- 2. Grain (micro‑texture) ----
-            float grain = hash(pixelCoord * 0.5) * 0.03;   // 3% noise
-            paperColor += grain - 0.015;
+            // ---- 2. Horizontal Lines (College Ruled: 7.1mm / 9/32") ----
+            // At typical DPI, 7.1mm ≈ 27 pixels. Wide ruled is 8.7mm ≈ 33 pixels.
+            // Using 30 pixels as a good default that scales with resolution.
+            float lineSpacing = 30.0;      // College Ruled (7.1mm equivalent)
+            float lineWidth = 1.5;         // Thin, feint lines
 
-            // ---- 3. Blemishes (low‑frequency spots) ----
-            float blemish = hash(pixelCoord * 0.02) * 0.02;
-            paperColor -= blemish;
-            paperColor = clamp(paperColor, 0.0, 1.0);
-
-            // ---- 4. Lined grid ----
-            float lineWidth = 2.0;      // pixels
-            float spacing   = 40.0;     // pixels between lines
-
-            float gridY = mod(pixelCoord.y, spacing);
-            float distToLine = abs(gridY - spacing / 2.0);
+            // Distance to nearest horizontal line
+            float gridY = mod(pixelCoord.y, lineSpacing);
+            float distToLine = abs(gridY - lineSpacing / 2.0);
             float lineFactor = 1.0 - smoothstep(0.0, lineWidth, distToLine);
 
-            vec3 lineColor = vec3(0.6, 0.6, 0.8); // soft blue‑grey
-
-            // Mix paper and line
+            // Feint-ruled: light blue-grey lines (standard for notebook paper)[reference:15]
+            vec3 lineColor = vec3(0.55, 0.60, 0.75);
             vec3 finalColor = mix(paperColor, lineColor, lineFactor);
 
-            // ---- 5. Subtle vignette (darken edges) ----
-            vec2 center = vec2(0.5, 0.5);
-            float vignette = 1.0 - length(vTexCoord - center) * 0.6;
-            finalColor *= vignette;
+            // ---- 3. Left Margin (Red Vertical Line) ----
+            // Standard: 32mm (1 1/4") from left edge[reference:16][reference:17]
+            // Only on trim sizes with width > 6"[reference:18][reference:19]
+            float marginRatio = 0.12; // ~32mm on Letter/A4 page
+
+            // Only show margin if screen is wide enough (simulates "width > 6"")
+            if (uResolution.x > 600.0) {
+                float marginX = marginRatio * uResolution.x;
+                float distToMargin = abs(pixelCoord.x - marginX);
+                float marginFactor = 1.0 - smoothstep(0.0, 1.5, distToMargin);
+
+                // Standard red margin color[reference:20]
+                vec3 marginColor = vec3(0.75, 0.20, 0.20);
+                finalColor = mix(finalColor, marginColor, marginFactor);
+            }
+
+            // ---- 4. Very Subtle Aging (Warm Vignette) ----
+            // Slight warming at edges for a natural paper look
+            float ageVignette = 1.0 - length(vTexCoord - 0.5) * 0.3;
+            vec3 agedColor = vec3(0.92, 0.88, 0.82);
+            finalColor = mix(finalColor, agedColor, (1.0 - ageVignette) * 0.15);
+
+            // Clamp to ensure valid color range
+            finalColor = clamp(finalColor, 0.0, 1.0);
 
             outColor = vec4(finalColor, 1.0);
         }
     """.trimIndent()
 
-    // ----- Lifecycle methods -----
+    // ----- Lifecycle Methods -----
 
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
@@ -111,14 +118,12 @@ class MyGLRenderer : GLSurfaceView.Renderer {
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
             .apply { put(quadVertices).position(0) }
-
-        // No texture needed anymore – we draw everything procedurally
     }
 
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
         GLES32.glViewport(0, 0, width, height)
 
-        // Pass the screen resolution to the shader
+        // Pass screen resolution to shader
         GLES32.glUseProgram(programId)
         GLES32.glUniform2f(resolutionUniform, width.toFloat(), height.toFloat())
     }
@@ -126,7 +131,6 @@ class MyGLRenderer : GLSurfaceView.Renderer {
     override fun onDrawFrame(unused: GL10?) {
         GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
 
-        // Use our shader program
         GLES32.glUseProgram(programId)
 
         // Enable vertex attributes
@@ -145,7 +149,7 @@ class MyGLRenderer : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ----- Helper: shader compiler -----
+    // ----- Helper: Shader Compiler -----
     private fun loadShader(type: Int, shaderCode: String): Int {
         return GLES32.glCreateShader(type).also { shader ->
             GLES32.glShaderSource(shader, shaderCode)

@@ -26,16 +26,15 @@ class MainActivity : ComponentActivity() {
 
         // Wait for the view to be ready and set a sample text
         glSurfaceView.post {
-            // Example: display "Hello, Notebook!" on line 3 (0-indexed)
             val sampleText = TextOverlay(
                 text = "Hello, Notebook!",
-                lineNumber = 3,      // 0 = first line, 1 = second, etc.
+                lineNumber = 3,
                 textSize = 40f,
                 color = android.graphics.Color.BLACK,
                 xOffset = 20f,
-                yOffset = 20f        // baseline adjustment
+                yOffset = 20f
             )
-            glSurfaceView.renderer.setTextOverlay(sampleText)
+            glSurfaceView.setTextOverlay(sampleText)   // ✅ Use public method
         }
     }
 

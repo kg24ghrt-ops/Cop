@@ -8,11 +8,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import android.content.Context  // explicit import for Context
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var glSurfaceView: MyGLSurfaceView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             androidx.compose.material3.MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -20,21 +23,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-}
 
-@Composable
-fun InkEngineView() {
-    // Explicitly specify type arguments to help inference
-    AndroidView<MyGLSurfaceView>(
-        modifier = Modifier.fillMaxSize(),
-        factory = { context: Context ->
-            MyGLSurfaceView(context).apply {
-                // optional setup
-            }
-        },
-        update = { view: MyGLSurfaceView ->
-            // called when the view needs to update (e.g., recomposition)
+        // Wait for the view to be ready and set a sample text
+        glSurfaceView.post {
+            // Example: display "Hello, Notebook!" on line 3 (0-indexed)
+            val sampleText = TextOverlay(
+                text = "Hello, Notebook!",
+                lineNumber = 3,      // 0 = first line, 1 = second, etc.
+                textSize = 40f,
+                color = android.graphics.Color.BLACK,
+                xOffset = 20f,
+                yOffset = 20f        // baseline adjustment
+            )
+            glSurfaceView.renderer.setTextOverlay(sampleText)
         }
-    )
+    }
+
+    @Composable
+    fun InkEngineView() {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                MyGLSurfaceView(context).also {
+                    glSurfaceView = it
+                }
+            },
+            update = { view ->
+                // Optional: update when state changes
+            }
+        )
+    }
 }

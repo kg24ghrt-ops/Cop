@@ -51,7 +51,15 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("com.google.android.material:material:1.12.0")   // or the latest version
-    
+    val ink_version = "1.1.0-alpha05"
+    implementation("androidx.ink:ink-authoring:$ink_version")
+    implementation("androidx.ink:ink-brush:$ink_version")
+    implementation("androidx.ink:ink-geometry:$ink_version")
+    implementation("androidx.ink:ink-nativeloader:$ink_version")
+    implementation("androidx.ink:ink-rendering:$ink_version")
+    implementation("androidx.ink:ink-storage:$ink_version")
+    implementation("androidx.ink:ink-strokes:$ink_version")
+   
     // OpenGL ES 相关依赖（Android SDK 已内置，无需额外添加）
     // 但为了兼容性，可以显式声明
     // implementation("androidx.appcompat:appcompat:1.7.0")

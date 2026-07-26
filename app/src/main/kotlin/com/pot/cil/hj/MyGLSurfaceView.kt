@@ -3,83 +3,78 @@ package com.pot.cil.hj
 import android.content.Context
 import android.opengl.GLSurfaceView
 import android.util.AttributeSet
-import android.util.Log
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 
-/**
- * GLSurfaceView that hosts the notebook paper renderer.
- * Optimized per Android Developer documentation:
- * - Uses RENDERMODE_WHEN_DIRTY for on-demand rendering
- * - Manages EGL context and rendering thread [8†L15-L20]
- * - Handles touch events to show keyboard
- */
 class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
 
     private val renderer = MyGLRenderer()
     private var fakeEditText: FakeEditText? = null
-    private var currentText = ""
-
-    companion object {
-        private const val TAG = "MyGLSurfaceView"
-    }
 
     init {
         setEGLContextClientVersion(3)
-
-        // Configure EGL for optimal performance
         setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-
         setRenderer(renderer)
+        renderMode = RENDERMODE_CONTINUOUSLY
 
-        // CRITICAL PERFORMANCE: Render only when needed
-        renderMode = RENDERMODE_WHEN_DIRTY
-
+        // Make this view focusable in touch mode so we can show the keyboard
         isFocusableInTouchMode = true
     }
 
+    /**
+     * Set the FakeEditText instance that will serve as the keyboard bridge.
+     * Must be called before any typing interaction.
+     */
     fun setFakeEditText(editText: FakeEditText) {
         this.fakeEditText = editText
+        // When the edit text changes, update our rendered text
         editText.setOnTextChangeListener { newText ->
-            Log.d(TAG, "Text changed: '$newText'")
-            currentText = newText
             updateRenderedText(newText)
         }
     }
 
+    /**
+     * Update the rendered text overlay with the given string.
+     * Called both from the EditText callback and externally.
+     */
     fun updateRenderedText(text: String) {
+        // Use a default line number (e.g., line 3) – you can change this as needed.
+        // For dynamic line selection, you can store a variable.
+        val lineNumber = 3
         val textOverlay = TextOverlay(
             text = text,
-            lineNumber = 3,
-            textSize = 60f,
+            lineNumber = lineNumber,
+            textSize = 40f,
             color = android.graphics.Color.BLACK,
-            xOffset = 40f,
-            yOffset = 30f
+            xOffset = 20f,
+            yOffset = 20f
         )
-
-        // Use queueEvent for thread-safe communication with renderer [9†L13-L15]
-        queueEvent {
+        // Post to UI thread to avoid threading issues
+        post {
             renderer.setTextOverlay(textOverlay)
+            requestRender()
         }
-        requestRender()
     }
 
+    /** Clear the rendered text. */
     fun clearRenderedText() {
-        queueEvent {
+        post {
             renderer.clearTextOverlay()
+            requestRender()
         }
-        requestRender()
     }
 
+    // ---- Touch handling ----
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_DOWN) {
-            Log.d(TAG, "Screen tapped, showing keyboard")
+            // When the user taps the paper, show the keyboard
             showKeyboard()
             return true
         }
         return super.onTouchEvent(event)
     }
 
+    /** Request focus for the fake EditText and show the soft keyboard. */
     fun showKeyboard() {
         fakeEditText?.let { editText ->
             editText.requestFocus()
@@ -88,30 +83,11 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         }
     }
 
+    /** Hide the soft keyboard. */
     fun hideKeyboard() {
         fakeEditText?.let { editText ->
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(editText.windowToken, 0)
-        }
-    }
-
-    /**
-     * Called when activity pauses - EGL context may be lost [2†L9-L10]
-     */
-    override fun onPause() {
-        renderer.onPause()
-        super.onPause()
-    }
-
-    /**
-     * Called when activity resumes - EGL context restored [9†L16-L25]
-     */
-    override fun onResume() {
-        super.onResume()
-        renderer.onResume()
-        // Restore text if needed
-        if (currentText.isNotEmpty()) {
-            updateRenderedText(currentText)
         }
     }
 }

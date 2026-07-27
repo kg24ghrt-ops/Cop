@@ -7,7 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.opengl.GLES32
 import android.opengl.GLSurfaceView
-import android.opengl.GLUtils          // <-- required for GLUtils.texImage2D / texSubImage2D
+import android.opengl.GLUtils
 import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -31,8 +31,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var leftMarginPx = 40f
     private var bottomMarginPx = 16f
     private var totalLines = TOTAL_LINES
-    private var textAreaWidth = 0      // pixels inside writing area
-    private var atlasHeight = 0        // height of the text atlas texture
+    private var textAreaWidth = 0
+    private var atlasHeight = 0
 
     // ---- Text storage ----
     private val textPerLine = mutableMapOf<Int, String>()
@@ -45,10 +45,10 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
          1.0f, -1.0f,  1.0f, 1.0f
     )
     private lateinit var vertexBuffer: FloatBuffer
-    private var vao = 0                  // Vertex Array Object
+    private var vao = 0
     private var programId = 0
 
-    // Uniform locations
+    // Uniform locations (validated and cached)
     private var resolutionUniform = -1
     private var textTextureUniform = -1
     private var noiseTextureUniform = -1
@@ -62,17 +62,23 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var atlasHeightUniform = -1
     private var noiseScaleUniform = -1
     private var noiseStrengthUniform = -1
+    private var paperColorUniform = -1
+    private var lineColorUniform = -1
+    private var marginColorUniform = -1
+    private var selectedLineColorUniform = -1
+    private var agedColorUniform = -1
+    private var vignetteStrengthUniform = -1
 
     // Textures
-    private var textAtlasTextureId = 0   // atlas holding all lines
-    private var noiseTextureId = 0       // procedural paper grain
+    private var textAtlasTextureId = 0
+    private var noiseTextureId = 0
 
     // State
     private var viewWidth = 0
     private var viewHeight = 0
     private var selectedLine = 3
 
-    // Reusable paint for text drawing
+    // Text paint (reusable)
     private val textPaint = Paint().apply {
         color = Color.BLACK
         isAntiAlias = true
@@ -157,8 +163,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             finalColor = mix(finalColor, uMarginColor, marginFactor);
 
             // Paper grain (subtle noise)
-            float noise = texture(uNoiseTexture,
-                                  vPixelCoord * uNoiseScale).r;
+            float noise = texture(uNoiseTexture, vPixelCoord * uNoiseScale).r;
             float grain = (noise - 0.5) * uNoiseStrength;
             finalColor = mix(finalColor, finalColor * (1.0 + grain), 0.6);
 
@@ -166,7 +171,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             float ageVignette = 1.0 - length(vTexCoord - 0.5) * uVignetteStrength;
             finalColor = mix(finalColor, uAgedColor, (1.0 - ageVignette) * 0.15);
 
-            // Text from atlas (already top‑down, no flip)
+            // Text from atlas (already top‑down)
             vec3 textRgb = vec3(0.0);
             float textAlpha = 0.0;
             if (inWritingArea > 0.5) {
@@ -193,10 +198,11 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // ---- Lifecycle ----
 
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
-        GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
+        GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)   // dark gray background
 
         val vertexShader = loadShader(GLES32.GL_VERTEX_SHADER, vertexShaderCode)
         val fragmentShader = loadShader(GLES32.GL_FRAGMENT_SHADER, fragmentShaderCode)
+
         programId = GLES32.glCreateProgram().also {
             GLES32.glAttachShader(it, vertexShader)
             GLES32.glAttachShader(it, fragmentShader)
@@ -210,30 +216,30 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             }
         }
 
-        // Cache uniform locations
-        resolutionUniform = GLES32.glGetUniformLocation(programId, "uResolution")
-        textTextureUniform = GLES32.glGetUniformLocation(programId, "uTextTexture")
-        noiseTextureUniform = GLES32.glGetUniformLocation(programId, "uNoiseTexture")
-        selectedLineUniform = GLES32.glGetUniformLocation(programId, "uSelectedLine")
-        lineSpacingUniform = GLES32.glGetUniformLocation(programId, "uLineSpacing")
-        topMarginUniform = GLES32.glGetUniformLocation(programId, "uTopMargin")
-        leftMarginUniform = GLES32.glGetUniformLocation(programId, "uLeftMargin")
-        bottomMarginUniform = GLES32.glGetUniformLocation(programId, "uBottomMargin")
-        totalLinesUniform = GLES32.glGetUniformLocation(programId, "uTotalLines")
-        textAreaWidthUniform = GLES32.glGetUniformLocation(programId, "uTextAreaWidth")
-        atlasHeightUniform = GLES32.glGetUniformLocation(programId, "uAtlasHeight")
-        noiseScaleUniform = GLES32.glGetUniformLocation(programId, "uNoiseScale")
-        noiseStrengthUniform = GLES32.glGetUniformLocation(programId, "uNoiseStrength")
+        // Cache all uniform locations and verify they are valid
+        resolutionUniform = requireUniform("uResolution")
+        textTextureUniform = requireUniform("uTextTexture")
+        noiseTextureUniform = requireUniform("uNoiseTexture")
+        selectedLineUniform = requireUniform("uSelectedLine")
+        lineSpacingUniform = requireUniform("uLineSpacing")
+        topMarginUniform = requireUniform("uTopMargin")
+        leftMarginUniform = requireUniform("uLeftMargin")
+        bottomMarginUniform = requireUniform("uBottomMargin")
+        totalLinesUniform = requireUniform("uTotalLines")
+        textAreaWidthUniform = requireUniform("uTextAreaWidth")
+        atlasHeightUniform = requireUniform("uAtlasHeight")
+        noiseScaleUniform = requireUniform("uNoiseScale")
+        noiseStrengthUniform = requireUniform("uNoiseStrength")
+        paperColorUniform = requireUniform("uPaperColor")
+        lineColorUniform = requireUniform("uLineColor")
+        marginColorUniform = requireUniform("uMarginColor")
+        selectedLineColorUniform = requireUniform("uSelectedLineColor")
+        agedColorUniform = requireUniform("uAgedColor")
+        vignetteStrengthUniform = requireUniform("uVignetteStrength")
 
+        // Set static colour uniforms once
         GLES32.glUseProgram(programId)
-        GLES32.glUniform3f(GLES32.glGetUniformLocation(programId, "uPaperColor"), 0.98f, 0.96f, 0.90f)
-        GLES32.glUniform3f(GLES32.glGetUniformLocation(programId, "uLineColor"), 0.55f, 0.60f, 0.75f)
-        GLES32.glUniform3f(GLES32.glGetUniformLocation(programId, "uMarginColor"), 0.75f, 0.20f, 0.20f)
-        GLES32.glUniform3f(GLES32.glGetUniformLocation(programId, "uSelectedLineColor"), 0.4f, 0.6f, 1.0f)
-        GLES32.glUniform3f(GLES32.glGetUniformLocation(programId, "uAgedColor"), 0.92f, 0.88f, 0.82f)
-        GLES32.glUniform1f(GLES32.glGetUniformLocation(programId, "uVignetteStrength"), 0.3f)
-        GLES32.glUniform1f(noiseScaleUniform, 0.15f)
-        GLES32.glUniform1f(noiseStrengthUniform, 0.06f)
+        setColorsAndConstants()
 
         // Quad geometry and VAO
         vertexBuffer = ByteBuffer.allocateDirect(quadVertices.size * 4)
@@ -282,25 +288,13 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         textAreaWidth = maxOf(1, (width - leftMarginPx).toInt())
         atlasHeight = maxOf(1, (totalLines * lineSpacingPx).toInt())
 
-        // (Re)create the atlas texture
+        // (Re)create the atlas texture with a guaranteed complete 1x1 transparent pixel
         if (textAtlasTextureId != 0) {
             GLES32.glDeleteTextures(1, intArrayOf(textAtlasTextureId), 0)
         }
-        val ids = IntArray(1)
-        GLES32.glGenTextures(1, ids, 0)
-        textAtlasTextureId = ids[0]
-        GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textAtlasTextureId)
-        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
-        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
-        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_S, GLES32.GL_CLAMP_TO_EDGE)
-        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_T, GLES32.GL_CLAMP_TO_EDGE)
-        GLES32.glTexImage2D(
-            GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA,
-            textAreaWidth, atlasHeight, 0,
-            GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, null
-        )
+        textAtlasTextureId = createEmptyTexture(textAreaWidth, atlasHeight)
 
-        // Update uniforms
+        // Update dynamic uniforms
         GLES32.glUseProgram(programId)
         GLES32.glUniform2f(resolutionUniform, width.toFloat(), height.toFloat())
         GLES32.glUniform1f(lineSpacingUniform, lineSpacingPx)
@@ -354,14 +348,10 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     fun clearAllText() {
         textPerLine.clear()
-        // Recreate the atlas texture (empty) if we already have dimensions
         if (viewWidth > 0 && textAtlasTextureId != 0) {
-            GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textAtlasTextureId)
-            GLES32.glTexImage2D(
-                GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA,
-                textAreaWidth, atlasHeight, 0,
-                GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, null
-            )
+            // Clear atlas by re-allocating a transparent texture
+            GLES32.glDeleteTextures(1, intArrayOf(textAtlasTextureId), 0)
+            textAtlasTextureId = createEmptyTexture(textAreaWidth, atlasHeight)
         }
     }
 
@@ -380,13 +370,65 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     // ---- Private helpers ----
 
+    /**
+     * Retrieves a uniform location and throws if it's -1 (missing/optimized out).
+     */
+    private fun requireUniform(name: String): Int {
+        val loc = GLES32.glGetUniformLocation(programId, name)
+        if (loc == -1) {
+            throw RuntimeException("Uniform '$name' not found in shader program")
+        }
+        return loc
+    }
+
+    /**
+     * Sets the static colour / vignette / noise uniforms.
+     */
+    private fun setColorsAndConstants() {
+        GLES32.glUniform3f(paperColorUniform, 0.98f, 0.96f, 0.90f)
+        GLES32.glUniform3f(lineColorUniform, 0.55f, 0.60f, 0.75f)
+        GLES32.glUniform3f(marginColorUniform, 0.75f, 0.20f, 0.20f)
+        GLES32.glUniform3f(selectedLineColorUniform, 0.4f, 0.6f, 1.0f)
+        GLES32.glUniform3f(agedColorUniform, 0.92f, 0.88f, 0.82f)
+        GLES32.glUniform1f(vignetteStrengthUniform, 0.3f)
+        GLES32.glUniform1f(noiseScaleUniform, 0.15f)
+        GLES32.glUniform1f(noiseStrengthUniform, 0.06f)
+    }
+
+    /**
+     * Creates a texture of the given size, initialised to fully transparent.
+     * Passing null as pixel data is the correct way to allocate without uploading,
+     * guaranteeing the texture is complete on all GLES 3.0+ devices.
+     */
+    private fun createEmptyTexture(width: Int, height: Int): Int {
+        val ids = IntArray(1)
+        GLES32.glGenTextures(1, ids, 0)
+        val texId = ids[0]
+        GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, texId)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_S, GLES32.GL_CLAMP_TO_EDGE)
+        GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_T, GLES32.GL_CLAMP_TO_EDGE)
+
+        // null → driver allocates memory; texture is complete and initially undefined
+        GLES32.glTexImage2D(
+            GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA,
+            width, height, 0,
+            GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, null
+        )
+        checkGlError("createEmptyTexture")
+        return texId
+    }
+
+    /**
+     * Updates a single line strip in the texture atlas.
+     */
     private fun updateLineTexture(line: Int, text: String) {
         if (textAtlasTextureId == 0 || textAreaWidth <= 0) return
 
         val stripHeight = lineSpacingPx.toInt()
         val yOffset = line * stripHeight
 
-        // Prepare a strip bitmap (transparent by default)
         val stripBitmap = Bitmap.createBitmap(
             textAreaWidth, stripHeight, Bitmap.Config.ARGB_8888
         )
@@ -400,7 +442,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             canvas.drawText(text, 0f, baselineY, textPaint)
         }
 
-        // Upload the strip into the atlas
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, textAtlasTextureId)
         GLUtils.texSubImage2D(
             GLES32.GL_TEXTURE_2D, 0,
@@ -445,5 +486,15 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             throw RuntimeException("Shader compilation failed: $info")
         }
         return shader
+    }
+
+    /**
+     * Checks for OpenGL errors and logs them. Call after important GL operations.
+     */
+    private fun checkGlError(op: String) {
+        val error = GLES32.glGetError()
+        if (error != GLES32.GL_NO_ERROR) {
+            Log.e("MyGLRenderer", "OpenGL error after $op: 0x${Integer.toHexString(error)}")
+        }
     }
 }

@@ -7,7 +7,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 
-class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
+class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) :
+    GLSurfaceView(context, attrs) {
 
     private val renderer = MyGLRenderer(context)
     private var fakeEditText: FakeEditText? = null
@@ -17,36 +18,43 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         setEGLContextClientVersion(3)
         setEGLConfigChooser(8, 8, 8, 8, 16, 0)
         setRenderer(renderer)
+        // Continuous rendering – no need for manual requestRender() calls
         renderMode = RENDERMODE_CONTINUOUSLY
         isFocusableInTouchMode = true
         isFocusable = true
     }
 
     fun setFakeEditText(editText: FakeEditText) {
-        this.fakeEditText = editText
+        fakeEditText = editText
         editText.setOnTextChangeListener { newText ->
-            // Update text on the current line
             renderer.setTextOnLine(currentLine, newText)
         }
     }
 
-    /** Called when the user types; updates the text on the current line. */
     fun updateRenderedText(text: String) {
         renderer.setTextOnLine(currentLine, text)
     }
 
-    /** Clear all text from the paper. */
     fun clearRenderedText() {
         renderer.clearAllText()
         fakeEditText?.clearText()
     }
 
-    /** Move selection to a specific line (0‑based). */
+    /**
+     * Move selection to a specific line (0‑based).  If the line didn’t change,
+     * the method returns immediately to avoid unnecessary work.
+     */
     fun moveToLine(lineNumber: Int) {
         val totalLines = renderer.getTotalLines()
-        currentLine = lineNumber.coerceIn(0, totalLines - 1)
+        val targetLine = lineNumber.coerceIn(0, totalLines - 1)
+
+        // No change → skip all updates
+        if (targetLine == currentLine) return
+
+        currentLine = targetLine
         renderer.setSelectedLine(currentLine)
-        // Refresh the EditText content to show the text of the new line (if any)
+
+        // Update the fake EditText to show any existing text on the new line
         fakeEditText?.let {
             val lineText = renderer.getTextOnLine(currentLine) ?: ""
             if (it.text.toString() != lineText) {
@@ -54,7 +62,6 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
                 it.setSelection(lineText.length)
             }
         }
-        requestRender()
     }
 
     fun moveLineUp() {
@@ -77,10 +84,11 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
             val relativeY = y - topMargin
             val line = (relativeY / lineHeight).toInt()
 
-            if (line >= 0 && line < renderer.getTotalLines()) {
+            if (line in 0 until renderer.getTotalLines()) {
                 moveToLine(line)
             }
 
+            // Always offer the keyboard; if already on the same line it just ensures focus
             showKeyboard()
             return true
         }

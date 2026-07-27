@@ -101,7 +101,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             vec3 finalColor = uPaperColor;
             float y = vPixelCoord.y;
 
-            // Correct bottom margin using uResolution.y
             float inWritingArea = step(uTopMargin, y) * step(y, uResolution.y - uBottomMargin);
 
             float relativeY = y - uTopMargin;
@@ -204,7 +203,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glUniform1f(totalLinesUniform, totalLines.toFloat())
         GLES32.glUniform1f(selectedLineUniform, selectedLine.toFloat())
 
-        // Re-render all lines with new dimensions
         refreshTextTexture()
     }
 
@@ -230,9 +228,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ---- Public API for multi-line text ----
+    // ---- Public API ----
 
-    /** Set or update text on a specific line. */
     fun setTextOnLine(lineNumber: Int, text: String) {
         val safeLine = lineNumber.coerceIn(0, totalLines - 1)
         if (text.isEmpty()) {
@@ -244,13 +241,16 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setSelectedLine(safeLine)
     }
 
-    /** Clear all text. */
+    /** Returns the text on a given line, or null if empty. */
+    fun getTextOnLine(lineNumber: Int): String? {
+        return textPerLine[lineNumber]
+    }
+
     fun clearAllText() {
         textPerLine.clear()
         refreshTextTexture()
     }
 
-    /** Highlight a line (without changing text). */
     fun setSelectedLine(lineNumber: Int) {
         selectedLine = lineNumber.coerceIn(0, totalLines - 1)
         GLES32.glUseProgram(programId)

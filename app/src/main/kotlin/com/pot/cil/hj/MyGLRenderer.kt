@@ -17,21 +17,18 @@ import javax.microedition.khronos.opengles.GL10
 
 class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
-    // ---- Paper Dimensions (in pixels at ~96 DPI) ----
-    private val LINE_SPACING_MM = 7.1f      // 7.1mm college ruled
-    private val TOP_MARGIN_MM = 32f         // 32mm top margin
-    private val LEFT_MARGIN_MM = 32f        // 32mm left margin (red line)
-    private val BOTTOM_MARGIN_MM = 12.7f    // ~0.5" bottom margin
-    private val TOTAL_LINES = 32            // 32-33 lines per page
+    private val LINE_SPACING_MM = 7.1f
+    private val TOP_MARGIN_MM = 32f
+    private val LEFT_MARGIN_MM = 32f
+    private val BOTTOM_MARGIN_MM = 12.7f
+    private val TOTAL_LINES = 32
 
-    // ---- Runtime values (calculated from screen DPI) ----
     private var lineSpacingPx = 30f
     private var topMarginPx = 40f
     private var leftMarginPx = 40f
     private var bottomMarginPx = 16f
     private var totalLines = TOTAL_LINES
 
-    // ---- OpenGL resources ----
     private val quadVertices = floatArrayOf(
         -1.0f,  1.0f,  0.0f, 0.0f,
         -1.0f, -1.0f,  0.0f, 1.0f,
@@ -54,7 +51,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var viewHeight = 0
     private var selectedLine = 3
 
-    // ---- Vertex Shader ----
     private val vertexShaderCode = """
         #version 320 es
         layout(location = 0) in vec4 aPosition;
@@ -69,7 +65,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ---- Fragment Shader with Line Selection ----
     private val fragmentShaderCode = """
         #version 320 es
         precision mediump float;
@@ -132,8 +127,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ---- Lifecycle Methods ----
-
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
 
@@ -176,7 +169,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         viewWidth = width
         viewHeight = height
 
-        // Calculate pixel values based on screen density
         val dpi = context.resources.displayMetrics.densityDpi.toFloat()
         val pixelsPerMm = dpi / 25.4f
 
@@ -223,8 +215,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    // ---- Public API ----
-
     fun setTextOverlay(textOverlay: TextOverlay, lineNumber: Int) {
         if (viewWidth == 0 || viewHeight == 0) return
 
@@ -248,11 +238,12 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glUniform1f(selectedLineUniform, selectedLine.toFloat())
     }
 
+    // ---- NEW GETTER METHODS (added) ----
     fun getTotalLines(): Int = totalLines
     fun getLineHeightPixels(): Float = lineSpacingPx
     fun getTopMarginPixels(): Float = topMarginPx
-
-    // ---- Private Helpers ----
+    fun getLeftMarginPixels(): Float = leftMarginPx
+    fun getLineSpacingPixels(): Float = lineSpacingPx
 
     private fun renderTextToBitmap(textOverlay: TextOverlay, width: Int, height: Int, lineNumber: Int): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

@@ -9,7 +9,6 @@ import android.view.inputmethod.InputMethodManager
 
 class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
 
-    // ✅ 正确：传入 context 参数
     private val renderer = MyGLRenderer(context)
     private var fakeEditText: FakeEditText? = null
     private var currentLine = 3
@@ -30,14 +29,21 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         }
     }
 
+    // ---- UPDATED METHOD (dynamic alignment) ----
     fun updateRenderedText(text: String) {
+        val leftMargin = renderer.getLeftMarginPixels()
+        val lineSpacing = renderer.getLineSpacingPixels()
+
+        val xOffset = leftMargin + 10f
+        val yOffset = lineSpacing * 0.6f
+
         val textOverlay = TextOverlay(
             text = text,
             lineNumber = currentLine,
             textSize = 40f,
             color = android.graphics.Color.BLACK,
-            xOffset = 40f,
-            yOffset = 20f
+            xOffset = xOffset,
+            yOffset = yOffset
         )
         queueEvent {
             renderer.setTextOverlay(textOverlay, currentLine)
@@ -49,6 +55,7 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         queueEvent {
             renderer.clearTextOverlay()
         }
+        fakeEditText?.clearText()
         requestRender()
     }
 
@@ -72,6 +79,9 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         moveToLine(currentLine + 1)
     }
 
+    fun getCurrentLine(): Int = currentLine
+    fun getTotalLines(): Int = renderer.getTotalLines()
+
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_DOWN) {
             val lineHeight = renderer.getLineHeightPixels()
@@ -81,7 +91,7 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
             val relativeY = y - topMargin
             val line = (relativeY / lineHeight).toInt()
 
-            if (line >= 0) {
+            if (line >= 0 && line < renderer.getTotalLines()) {
                 moveToLine(line)
             }
 
@@ -117,6 +127,7 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         fakeEditText?.let { editText ->
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(editText.windowToken, 0)
+            editText.clearFocus()
         }
     }
 }

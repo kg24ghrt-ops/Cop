@@ -29,7 +29,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(rootLayout)
 
         glSurfaceView.post {
-            glSurfaceView.updateRenderedText("Tap the paper to type...")
+            glSurfaceView.updateRenderedText("Tap a line to select it...")
         }
     }
 

@@ -9,9 +9,10 @@ import android.view.inputmethod.InputMethodManager
 
 class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
 
-    private val renderer = MyGLRenderer()
+    // ✅ 正确：传入 context 参数
+    private val renderer = MyGLRenderer(context)
     private var fakeEditText: FakeEditText? = null
-    private var currentLine = 3  // Default starting line (0-indexed)
+    private var currentLine = 3
 
     init {
         setEGLContextClientVersion(3)
@@ -54,11 +55,9 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     fun moveToLine(lineNumber: Int) {
         val totalLines = renderer.getTotalLines()
         currentLine = lineNumber.coerceIn(0, totalLines - 1)
-        // Update the highlight
         queueEvent {
             renderer.setSelectedLine(currentLine)
         }
-        // Refresh the text on the new line
         fakeEditText?.let {
             updateRenderedText(it.text.toString())
         }
@@ -75,12 +74,10 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_DOWN) {
-            // Calculate which line was tapped
             val lineHeight = renderer.getLineHeightPixels()
             val topMargin = renderer.getTopMarginPixels()
             val y = event.y
 
-            // Convert touch Y to line number
             val relativeY = y - topMargin
             val line = (relativeY / lineHeight).toInt()
 

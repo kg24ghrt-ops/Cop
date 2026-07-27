@@ -9,6 +9,7 @@ import android.graphics.PorterDuff
 import android.opengl.GLES32
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
+import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -17,21 +18,21 @@ import javax.microedition.khronos.opengles.GL10
 
 class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
-    // ---- Paper specs ----
+    // ---- Paper specifications ----
     private val LINE_SPACING_MM = 7.1f
     private val TOP_MARGIN_MM = 32f
     private val LEFT_MARGIN_MM = 32f
     private val BOTTOM_MARGIN_MM = 12.7f
     private val TOTAL_LINES = 32
 
-    // ---- Runtime values ----
+    // ---- Runtime pixel values ----
     private var lineSpacingPx = 30f
     private var topMarginPx = 40f
     private var leftMarginPx = 40f
     private var bottomMarginPx = 16f
     private var totalLines = TOTAL_LINES
 
-    // ---- Text per line ----
+    // ---- Text storage (per line) ----
     private val textPerLine = mutableMapOf<Int, String>()
 
     // ---- OpenGL resources ----
@@ -72,7 +73,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ---- CORRECTED Fragment Shader ----
+    // ---- CORRECTED Fragment Shader (with Y‑flip for text, removed 600px gate) ----
     private val fragmentShaderCode = """
         #version 320 es
         precision mediump float;
@@ -98,8 +99,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         uniform float uVignetteStrength;
 
         void main() {
-            // Pixel coordinates are already top-to-bottom because vPixelCoord = aTexCoord * resolution
-            // and aTexCoord maps (0,0) to top-left, (0,1) to bottom-left in our vertex shader.
+            // Pixel coordinates are already top‑to‑bottom because vPixelCoord = aTexCoord * resolution
+            // and aTexCoord maps (0,0) to top‑left, (0,1) to bottom‑left in our vertex shader.
             float y = vPixelCoord.y;
 
             vec3 finalColor = uPaperColor;
@@ -124,7 +125,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             selectedFactor *= hasSelection;
             finalColor = mix(finalColor, uSelectedLineColor, selectedFactor * 0.3);
 
-            // Vertical red margin line (no hardcoded gate)
+            // Vertical red margin line (no hardcoded 600px gate)
             float distToMargin = abs(vPixelCoord.x - uLeftMargin);
             float marginFactor = 1.0 - smoothstep(0.0, 1.5, distToMargin);
             marginFactor *= inWritingArea;
@@ -134,8 +135,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             float ageVignette = 1.0 - length(vTexCoord - 0.5) * uVignetteStrength;
             finalColor = mix(finalColor, uAgedColor, (1.0 - ageVignette) * 0.15);
 
-            // Text overlay – flip V coordinate because the bitmap is stored top-to-bottom,
-            // but OpenGL expects the texture origin at bottom-left.
+            // Text overlay – flip V coordinate because the bitmap is stored top‑to‑bottom,
+            // but OpenGL expects the texture origin at bottom‑left.
             vec2 flippedTexCoord = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
             vec4 textColor = texture(uTextTexture, flippedTexCoord);
             finalColor = mix(finalColor, textColor.rgb, textColor.a);
@@ -157,6 +158,14 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES32.glAttachShader(it, vertexShader)
             GLES32.glAttachShader(it, fragmentShader)
             GLES32.glLinkProgram(it)
+            // Check link status
+            val linked = IntArray(1)
+            GLES32.glGetProgramiv(it, GLES32.GL_LINK_STATUS, linked, 0)
+            if (linked[0] == 0) {
+                val info = GLES32.glGetProgramInfoLog(it)
+                Log.e("MyGLRenderer", "Program linking failed: $info")
+                throw RuntimeException("Program linking failed: $info")
+            }
         }
 
         resolutionUniform = GLES32.glGetUniformLocation(programId, "uResolution")
@@ -202,6 +211,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val availableHeight = height - topMarginPx - bottomMarginPx
         totalLines = (availableHeight / lineSpacingPx).toInt().coerceAtMost(TOTAL_LINES)
+
+        Log.d("MyGLRenderer", "Resolution: $width x $height, lineSpacing: $lineSpacingPx, topMargin: $topMarginPx")
 
         GLES32.glUseProgram(programId)
         GLES32.glUniform2f(resolutionUniform, width.toFloat(), height.toFloat())
@@ -325,15 +336,16 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     private fun loadShader(type: Int, shaderCode: String): Int {
-        return GLES32.glCreateShader(type).also { shader ->
-            GLES32.glShaderSource(shader, shaderCode)
-            GLES32.glCompileShader(shader)
-            val compiled = IntArray(1)
-            GLES32.glGetShaderiv(shader, GLES32.GL_COMPILE_STATUS, compiled, 0)
-            if (compiled[0] == 0) {
-                val info = GLES32.glGetShaderInfoLog(shader)
-                throw RuntimeException("Shader compilation failed: $info")
-            }
+        val shader = GLES32.glCreateShader(type)
+        GLES32.glShaderSource(shader, shaderCode)
+        GLES32.glCompileShader(shader)
+        val compiled = IntArray(1)
+        GLES32.glGetShaderiv(shader, GLES32.GL_COMPILE_STATUS, compiled, 0)
+        if (compiled[0] == 0) {
+            val info = GLES32.glGetShaderInfoLog(shader)
+            Log.e("MyGLRenderer", "Shader compilation failed: $info")
+            throw RuntimeException("Shader compilation failed: $info")
         }
+        return shader
     }
 }

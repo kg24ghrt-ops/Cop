@@ -58,12 +58,14 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var viewHeight = 0
     private var selectedLine = 3
 
-    // ---- Vertex Shader ----
+    // ---- Vertex Shader (with explicit precision for uResolution) ----
     private val vertexShaderCode = """
         #version 320 es
+        precision mediump float;    // Add this to match fragment shader precision
+
         layout(location = 0) in vec4 aPosition;
         layout(location = 1) in vec2 aTexCoord;
-        uniform vec2 uResolution;
+        uniform vec2 uResolution;   // Now uses mediump precision (from line above)
         out vec2 vPixelCoord;
         out vec2 vTexCoord;
         void main() {
@@ -73,7 +75,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ---- CORRECTED Fragment Shader (with Y‑flip for text, removed 600px gate) ----
+    // ---- Fragment Shader ----
     private val fragmentShaderCode = """
         #version 320 es
         precision mediump float;

@@ -3,8 +3,8 @@ package com.pot.cil.hj
 import android.content.Context
 import android.graphics.*
 import kotlin.math.min
+import kotlin.math.hypot
 import kotlin.random.Random
-import kotlin.math.hypot      
 
 class MyGLRenderer(private val context: Context) {
 
@@ -24,8 +24,9 @@ class MyGLRenderer(private val context: Context) {
         private set
     var bottomMarginPx = 16f
         private set
-    var totalLines = TOTAL_LINES
-        private set
+
+    // Use a backing field to avoid clash with getTotalLines()
+    private var totalLinesValue = TOTAL_LINES
 
     // ---- Text storage ----
     private val textPerLine = mutableMapOf<Int, String>()
@@ -75,7 +76,7 @@ class MyGLRenderer(private val context: Context) {
         bottomMarginPx = BOTTOM_MARGIN_MM * pxPerMm
 
         val availableHeight = height - topMarginPx - bottomMarginPx
-        totalLines = (availableHeight / lineSpacingPx).toInt().coerceAtMost(TOTAL_LINES)
+        totalLinesValue = (availableHeight / lineSpacingPx).toInt().coerceAtMost(TOTAL_LINES)
         textPaint.textSize = lineSpacingPx * 0.5f
 
         rebuildLinesBitmap()
@@ -103,7 +104,7 @@ class MyGLRenderer(private val context: Context) {
 
         linesBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
 
-        if (selectedLine in 0 until totalLines) {
+        if (selectedLine in 0 until totalLinesValue) {
             val y = topMarginPx + selectedLine * lineSpacingPx
             canvas.drawRect(leftMarginPx, y, viewWidth.toFloat(), y + lineSpacingPx, selectedLinePaint)
         }
@@ -112,7 +113,7 @@ class MyGLRenderer(private val context: Context) {
     }
 
     fun setTextOnLine(lineNumber: Int, text: String) {
-        val safeLine = lineNumber.coerceIn(0, totalLines - 1)
+        val safeLine = lineNumber.coerceIn(0, totalLinesValue - 1)
         if (text.isEmpty()) {
             textPerLine.remove(safeLine)
         } else {
@@ -130,10 +131,11 @@ class MyGLRenderer(private val context: Context) {
     }
 
     fun setSelectedLine(lineNumber: Int) {
-        selectedLine = lineNumber.coerceIn(0, totalLines - 1)
+        selectedLine = lineNumber.coerceIn(0, totalLinesValue - 1)
     }
 
-    fun getTotalLines(): Int = totalLines
+    // Public getter – no JVM clash now
+    fun getTotalLines(): Int = totalLinesValue
     fun getLineHeightPixels(): Float = lineSpacingPx
     fun getTopMarginPixels(): Float = topMarginPx
     fun getLeftMarginPixels(): Float = leftMarginPx
@@ -144,7 +146,7 @@ class MyGLRenderer(private val context: Context) {
         linesBitmap?.recycle()
         linesBitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
         val c = Canvas(linesBitmap!!)
-        for (i in 0 until totalLines) {
+        for (i in 0 until totalLinesValue) {
             val y = topMarginPx + i * lineSpacingPx + lineSpacingPx / 2f
             c.drawLine(leftMarginPx, y, viewWidth.toFloat(), y, linePaint)
         }
@@ -158,7 +160,7 @@ class MyGLRenderer(private val context: Context) {
         val c = Canvas(textOverlayBitmap!!)
         c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         for ((line, text) in textPerLine) {
-            if (line !in 0 until totalLines) continue
+            if (line !in 0 until totalLinesValue) continue
             val x = leftMarginPx + 10f
             val lineTop = topMarginPx + line * lineSpacingPx
             val lineCenter = lineTop + lineSpacingPx / 2f

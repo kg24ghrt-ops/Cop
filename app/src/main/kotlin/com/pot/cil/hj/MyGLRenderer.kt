@@ -17,18 +17,24 @@ import javax.microedition.khronos.opengles.GL10
 
 class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
+    // ---- Paper specs ----
     private val LINE_SPACING_MM = 7.1f
     private val TOP_MARGIN_MM = 32f
     private val LEFT_MARGIN_MM = 32f
     private val BOTTOM_MARGIN_MM = 12.7f
     private val TOTAL_LINES = 32
 
+    // ---- Runtime values ----
     private var lineSpacingPx = 30f
     private var topMarginPx = 40f
     private var leftMarginPx = 40f
     private var bottomMarginPx = 16f
     private var totalLines = TOTAL_LINES
 
+    // ---- Text per line ----
+    private val textPerLine = mutableMapOf<Int, String>()
+
+    // ---- OpenGL resources ----
     private val quadVertices = floatArrayOf(
         -1.0f,  1.0f,  0.0f, 0.0f,
         -1.0f, -1.0f,  0.0f, 1.0f,
@@ -51,6 +57,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var viewHeight = 0
     private var selectedLine = 3
 
+    // ---- Vertex Shader ----
     private val vertexShaderCode = """
         #version 320 es
         layout(location = 0) in vec4 aPosition;
@@ -65,6 +72,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
+    // ---- Fragment Shader with FIXED bottom margin ----
     private val fragmentShaderCode = """
         #version 320 es
         precision mediump float;
@@ -74,6 +82,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         out vec4 outColor;
 
         uniform sampler2D uTextTexture;
+        uniform vec2 uResolution;
         uniform float uLineSpacing;
         uniform float uTopMargin;
         uniform float uLeftMargin;
@@ -92,7 +101,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             vec3 finalColor = uPaperColor;
             float y = vPixelCoord.y;
 
-            float inWritingArea = step(uTopMargin, y) * step(y, vPixelCoord.y - uBottomMargin);
+            // Correct bottom margin using uResolution.y
+            float inWritingArea = step(uTopMargin, y) * step(y, uResolution.y - uBottomMargin);
 
             float relativeY = y - uTopMargin;
             float gridY = mod(relativeY, uLineSpacing);
@@ -126,6 +136,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             outColor = vec4(finalColor, 1.0);
         }
     """.trimIndent()
+
+    // ---- Lifecycle ----
 
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
         GLES32.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
@@ -191,6 +203,9 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glUniform1f(bottomMarginUniform, bottomMarginPx)
         GLES32.glUniform1f(totalLinesUniform, totalLines.toFloat())
         GLES32.glUniform1f(selectedLineUniform, selectedLine.toFloat())
+
+        // Re-render all lines with new dimensions
+        refreshTextTexture()
     }
 
     override fun onDrawFrame(unused: GL10?) {
@@ -215,51 +230,66 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES32.glDisableVertexAttribArray(1)
     }
 
-    fun setTextOverlay(textOverlay: TextOverlay, lineNumber: Int) {
-        if (viewWidth == 0 || viewHeight == 0) return
+    // ---- Public API for multi-line text ----
 
+    /** Set or update text on a specific line. */
+    fun setTextOnLine(lineNumber: Int, text: String) {
         val safeLine = lineNumber.coerceIn(0, totalLines - 1)
-
-        val bitmap = renderTextToBitmap(textOverlay, viewWidth, viewHeight, safeLine)
-        uploadTexture(bitmap)
-
+        if (text.isEmpty()) {
+            textPerLine.remove(safeLine)
+        } else {
+            textPerLine[safeLine] = text
+        }
+        refreshTextTexture()
         setSelectedLine(safeLine)
     }
 
-    fun clearTextOverlay() {
-        val bitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
-        bitmap.eraseColor(Color.TRANSPARENT)
-        uploadTexture(bitmap)
+    /** Clear all text. */
+    fun clearAllText() {
+        textPerLine.clear()
+        refreshTextTexture()
     }
 
+    /** Highlight a line (without changing text). */
     fun setSelectedLine(lineNumber: Int) {
         selectedLine = lineNumber.coerceIn(0, totalLines - 1)
         GLES32.glUseProgram(programId)
         GLES32.glUniform1f(selectedLineUniform, selectedLine.toFloat())
     }
 
-    // ---- NEW GETTER METHODS (added) ----
+    // ---- Getters for alignment ----
     fun getTotalLines(): Int = totalLines
     fun getLineHeightPixels(): Float = lineSpacingPx
     fun getTopMarginPixels(): Float = topMarginPx
     fun getLeftMarginPixels(): Float = leftMarginPx
     fun getLineSpacingPixels(): Float = lineSpacingPx
 
-    private fun renderTextToBitmap(textOverlay: TextOverlay, width: Int, height: Int, lineNumber: Int): Bitmap {
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    // ---- Private helpers ----
+
+    private fun refreshTextTexture() {
+        if (viewWidth == 0 || viewHeight == 0) return
+        val bitmap = renderAllLinesToBitmap()
+        uploadTexture(bitmap)
+    }
+
+    private fun renderAllLinesToBitmap(): Bitmap {
+        val bitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
         val paint = Paint().apply {
-            color = textOverlay.color
-            textSize = textOverlay.textSize
+            color = Color.BLACK
+            textSize = 40f
             isAntiAlias = true
             isSubpixelText = true
             textAlign = Paint.Align.LEFT
         }
 
-        val y = topMarginPx + (lineNumber * lineSpacingPx) + textOverlay.yOffset
-        canvas.drawText(textOverlay.text, textOverlay.xOffset, y, paint)
+        for ((line, text) in textPerLine) {
+            val x = leftMarginPx + 10f
+            val y = topMarginPx + (line * lineSpacingPx) + lineSpacingPx * 0.6f
+            canvas.drawText(text, x, y, paint)
+        }
         return bitmap
     }
 

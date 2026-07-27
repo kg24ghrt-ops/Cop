@@ -25,48 +25,34 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     fun setFakeEditText(editText: FakeEditText) {
         this.fakeEditText = editText
         editText.setOnTextChangeListener { newText ->
-            updateRenderedText(newText)
+            // Update text on the current line
+            renderer.setTextOnLine(currentLine, newText)
         }
     }
 
-    // ---- UPDATED METHOD (dynamic alignment) ----
+    /** Called when the user types; updates the text on the current line. */
     fun updateRenderedText(text: String) {
-        val leftMargin = renderer.getLeftMarginPixels()
-        val lineSpacing = renderer.getLineSpacingPixels()
-
-        val xOffset = leftMargin + 10f
-        val yOffset = lineSpacing * 0.6f
-
-        val textOverlay = TextOverlay(
-            text = text,
-            lineNumber = currentLine,
-            textSize = 40f,
-            color = android.graphics.Color.BLACK,
-            xOffset = xOffset,
-            yOffset = yOffset
-        )
-        queueEvent {
-            renderer.setTextOverlay(textOverlay, currentLine)
-        }
-        requestRender()
+        renderer.setTextOnLine(currentLine, text)
     }
 
+    /** Clear all text from the paper. */
     fun clearRenderedText() {
-        queueEvent {
-            renderer.clearTextOverlay()
-        }
+        renderer.clearAllText()
         fakeEditText?.clearText()
-        requestRender()
     }
 
+    /** Move selection to a specific line (0‑based). */
     fun moveToLine(lineNumber: Int) {
         val totalLines = renderer.getTotalLines()
         currentLine = lineNumber.coerceIn(0, totalLines - 1)
-        queueEvent {
-            renderer.setSelectedLine(currentLine)
-        }
+        renderer.setSelectedLine(currentLine)
+        // Refresh the EditText content to show the text of the new line (if any)
         fakeEditText?.let {
-            updateRenderedText(it.text.toString())
+            val lineText = renderer.getTextOnLine(currentLine) ?: ""
+            if (it.text.toString() != lineText) {
+                it.setText(lineText)
+                it.setSelection(lineText.length)
+            }
         }
         requestRender()
     }

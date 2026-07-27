@@ -72,7 +72,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // ---- Fragment Shader with FIXED bottom margin ----
+    // ---- CORRECTED Fragment Shader ----
     private val fragmentShaderCode = """
         #version 320 es
         precision mediump float;
@@ -98,11 +98,16 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         uniform float uVignetteStrength;
 
         void main() {
-            vec3 finalColor = uPaperColor;
+            // Pixel coordinates are already top-to-bottom because vPixelCoord = aTexCoord * resolution
+            // and aTexCoord maps (0,0) to top-left, (0,1) to bottom-left in our vertex shader.
             float y = vPixelCoord.y;
 
+            vec3 finalColor = uPaperColor;
+
+            // Writing area bounds (top margin to bottom margin)
             float inWritingArea = step(uTopMargin, y) * step(y, uResolution.y - uBottomMargin);
 
+            // Horizontal notebook lines
             float relativeY = y - uTopMargin;
             float gridY = mod(relativeY, uLineSpacing);
             float distToLine = abs(gridY - uLineSpacing * 0.5);
@@ -110,6 +115,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             lineFactor *= inWritingArea;
             finalColor = mix(finalColor, uLineColor, lineFactor);
 
+            // Selected line highlight
             float selectedLineY = uTopMargin + uSelectedLine * uLineSpacing + uLineSpacing * 0.5;
             float distToSelected = abs(y - selectedLineY);
             float selectedFactor = 1.0 - smoothstep(0.0, uLineSpacing * 0.4, distToSelected);
@@ -118,17 +124,20 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             selectedFactor *= hasSelection;
             finalColor = mix(finalColor, uSelectedLineColor, selectedFactor * 0.3);
 
-            float marginActive = step(600.0, vPixelCoord.x);
+            // Vertical red margin line (no hardcoded gate)
             float distToMargin = abs(vPixelCoord.x - uLeftMargin);
             float marginFactor = 1.0 - smoothstep(0.0, 1.5, distToMargin);
-            marginFactor *= marginActive;
             marginFactor *= inWritingArea;
             finalColor = mix(finalColor, uMarginColor, marginFactor);
 
+            // Paper aging & vignette
             float ageVignette = 1.0 - length(vTexCoord - 0.5) * uVignetteStrength;
             finalColor = mix(finalColor, uAgedColor, (1.0 - ageVignette) * 0.15);
 
-            vec4 textColor = texture(uTextTexture, vTexCoord);
+            // Text overlay – flip V coordinate because the bitmap is stored top-to-bottom,
+            // but OpenGL expects the texture origin at bottom-left.
+            vec2 flippedTexCoord = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
+            vec4 textColor = texture(uTextTexture, flippedTexCoord);
             finalColor = mix(finalColor, textColor.rgb, textColor.a);
 
             finalColor = clamp(finalColor, 0.0, 1.0);
@@ -241,7 +250,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setSelectedLine(safeLine)
     }
 
-    /** Returns the text on a given line, or null if empty. */
     fun getTextOnLine(lineNumber: Int): String? {
         return textPerLine[lineNumber]
     }

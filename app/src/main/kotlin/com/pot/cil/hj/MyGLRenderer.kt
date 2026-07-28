@@ -5,6 +5,7 @@ import android.graphics.*
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.random.Random
+import kotlin.math.max 
 
 class MyGLRenderer(private val context: Context) {
 

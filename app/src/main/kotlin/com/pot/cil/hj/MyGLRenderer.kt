@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.*
 import kotlin.math.*
 import kotlin.random.Random
-import kotlin.math.max 
+import kotlin.math.max
 
 class MyGLRenderer(private val context: Context) {
 
@@ -251,58 +251,34 @@ class MyGLRenderer(private val context: Context) {
         val amplitude: Float,
         val wavelength: Float,
         val phase: Float,
-        val fatigueExponent: Float,   // > 0, controls how quickly the drift accelerates
-        val tremorAmplitude: Float,   // high‑frequency random walk
+        val fatigueExponent: Float,
+        val tremorAmplitude: Float,
         val rng: Random
     )
 
     private fun getJitterParams(line: Int): JitterParams {
         val seed = lineRngSeeds.getOrPut(line) { Random.nextLong() }
         val rng = Random(seed)
-
-        // Sine wave amplitude: 0.5 .. 2.0 px
         val amplitude = 0.5f + rng.nextFloat() * 1.5f
-        // Wavelength: 300 .. 800 px
         val wavelength = 300f + rng.nextFloat() * 500f
         val phase = rng.nextFloat() * 2f * PI.toFloat()
-        // Fatigue exponent: 1.0 .. 2.5, higher = faster downward drift later in line
         val fatigueExponent = 1.0f + rng.nextFloat() * 1.5f
-        // Tremor amplitude: 0.15 .. 0.4 px
         val tremorAmplitude = 0.15f + rng.nextFloat() * 0.25f
-
         return JitterParams(amplitude, wavelength, phase, fatigueExponent, tremorAmplitude, rng)
     }
 
-    /**
-     * Computes the baseline offset (in pixels) at a given x position.
-     * Combines a slow sinusoidal drift, an accelerating fatigue slope,
-     * and a tiny high‑frequency tremor.
-     */
     private fun computeBaselineOffset(x: Float, params: JitterParams): Float {
-        // Slow sine wave
         val sine = params.amplitude * sin(2.0 * PI * (x / params.wavelength) + params.phase).toFloat()
-        // Fatigue: starts near zero, accelerates towards the end of the line
-        // We use (x / 1000) raised to fatigueExponent so it's very gradual at first
         val progress = x / 1000f
         val fatigue = (progress.pow(params.fatigueExponent) * params.amplitude * 0.5f) *
-                if (params.fatigueExponent > 1.5f) -1f else 1f   // direction varies per line
-        // Tremor: small random walk using filtered noise (simple approach: use random directly,
-        // but we don't have a filter; instead we'll use a high-frequency sine + small random)
-        // To avoid per‑call coherence issues we just use the rng for micro‑jitter.
+                (if (params.fatigueExponent > 1.5f) -1f else 1f)
         val tremor = (params.rng.nextFloat() - 0.5f) * 2f * params.tremorAmplitude
-
         return sine + fatigue + tremor
     }
 
-    /**
-     * Computes the local slope of the baseline (for character rotation).
-     * Derivative of the sine + derivative of fatigue. We ignore tremor for slope.
-     */
     private fun computeBaselineSlope(x: Float, params: JitterParams): Float {
-        // Derivative of sine: amplitude * cos(...) * (2*PI/wavelength)
-        val freq = 2.0 * PI / params.wavelength
-        val dsine = params.amplitude * freq * cos(freq * x + params.phase).toFloat()
-        // Derivative of fatigue: exponential derivative
+        val freq = (2.0f * PI.toFloat()) / params.wavelength   // now Float
+        val dsine = params.amplitude * freq * cos(freq * x + params.phase)
         val progress = x / 1000f
         val dfatigue = params.fatigueExponent * (progress.pow(params.fatigueExponent - 1f)) *
                 params.amplitude * 0.5f / 1000f *
@@ -324,7 +300,6 @@ class MyGLRenderer(private val context: Context) {
         val bitmap = Bitmap.createBitmap(maxTextWidth, lineHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // Get jitter parameters for this line
         val jitterParams = getJitterParams(line)
 
         val fm = textPaint.fontMetrics
@@ -334,32 +309,23 @@ class MyGLRenderer(private val context: Context) {
         val chars = text.toCharArray()
         val charWidths = chars.map { textPaint.measureText(it.toString()) }
 
-        // Pre‑compute an ink pressure curve: full at start, fading towards end
-        val totalEstimatedWidth = charWidths.sum() * (1f + humanizeFactor * 0.1f) // rough total advance
+        val totalEstimatedWidth = charWidths.sum() * (1f + humanizeFactor * 0.1f)
         for ((index, char) in chars.withIndex()) {
             val charStr = char.toString()
             val charWidth = charWidths[index]
 
-            // Compute baseline offset from human model
             val baselineOffset = computeBaselineOffset(x, jitterParams) * humanizeFactor
 
-            // Character rotation: proportional to the local baseline slope
-            // A slope of 0.01 rad ≈ 0.57° – we convert to degrees and scale
             val slope = computeBaselineSlope(x, jitterParams)
-            val rotation = (slope * 180f / PI.toFloat()) * humanizeFactor * 0.8f   // scale down for subtlety
+            val rotation = (slope * 180f / PI.toFloat()) * humanizeFactor * 0.8f
 
-            // Spacing variation – mild random
             val spacingVariation = 1f + (jitterParams.rng.nextFloat() - 0.5f) * 0.1f * humanizeFactor
             val actualAdvance = charWidth * spacingVariation
 
-            // Ink opacity: pressure curve + random variation
-            val pressure = if (totalEstimatedWidth > 0) {
-                // pressure drops from 1.0 to 0.7 along the line
-                1.0f - 0.3f * (x / totalEstimatedWidth)
-            } else 1.0f
+            val pressure = if (totalEstimatedWidth > 0) 1.0f - 0.3f * (x / totalEstimatedWidth) else 1.0f
             val randomVariation = 0.05f * (jitterParams.rng.nextFloat() - 0.5f)
             val baseAlpha = (pressure + randomVariation).coerceIn(0.6f, 1.0f) *
-                    (1f - humanizeFactor * 0.15f)   // slightly lighter when more human
+                    (1f - humanizeFactor * 0.15f)
             textPaint.alpha = (baseAlpha * 255).toInt().coerceIn(0, 255)
 
             canvas.save()
@@ -370,7 +336,7 @@ class MyGLRenderer(private val context: Context) {
 
             x += actualAdvance
         }
-        textPaint.alpha = 255   // reset
+        textPaint.alpha = 255
 
         lineBitmapCache[line] = bitmap
     }
@@ -404,14 +370,13 @@ class MyGLRenderer(private val context: Context) {
         val pixels = IntArray(size * size)
         val rng = Random(67890)
         for (i in pixels.indices) {
-            val base = 245 + rng.nextInt(10)   // very light base for subtle grain
+            val base = 245 + rng.nextInt(10)
             val noise = rng.nextInt(6) - 3
             val gray = (base + noise).coerceIn(0, 255)
             pixels[i] = (255 shl 24) or (gray shl 16) or (gray shl 8) or gray
         }
         bmp.setPixels(pixels, 0, size, 0, 0, size, size)
 
-        // Soft blur for natural fiber look
         val blurred = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val blurCanvas = Canvas(blurred)
         val blurPaint = Paint().apply {
@@ -424,7 +389,7 @@ class MyGLRenderer(private val context: Context) {
         return blurred
     }
 
-    // ---- Pan clamping (keeps paper visible) ----
+    // ---- Pan clamping ----
     private fun clampPan() {
         val pts = floatArrayOf(0f, 0f, viewWidth.toFloat(), 0f, 0f, viewHeight.toFloat(), viewWidth.toFloat(), viewHeight.toFloat())
         contentMatrix.mapPoints(pts)

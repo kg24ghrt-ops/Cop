@@ -10,6 +10,7 @@ public:
     PaperRenderer();
     ~PaperRenderer();
 
+    // All GL initialization is done here – must be called with a valid GL context
     bool init();
     void destroy();
     void resize(int width, int height);
@@ -25,47 +26,38 @@ public:
     void resetTransform();
     void drawFrame();
 
-    // Returns true on success
     bool createFontAtlas(int width, int height, const uint8_t* pixels);
 
 private:
-    // GL resources
+    // GL resources (initialized to 0)
     GLuint mProgram = 0;
     GLuint mLineVbo = 0, mMarginVbo = 0, mHighlightVbo = 0;
     GLuint mGrainVbo = 0, mTextVbo = 0, mInstanceVbo = 0;
     GLuint mVignetteVbo = 0;
     GLuint mFontTexture = 0, mGrainTexture = 0;
 
-    // Uniforms
     GLint uMvp = -1, uColor = -1, uTexture = -1, uAlpha = -1;
     GLint uResolution = -1, uVignetteRadius = -1, uCharSize = -1;
-
-    // Attributes
     GLint aPos = -1, aTexCoord = -1;
     GLint aInstanceX = -1, aInstanceY = -1, aInstanceRot = -1;
     GLint aInstanceUvOffset = -1, aInstanceAlpha = -1;
 
-    // Paper params
     int mWidth = 0, mHeight = 0;
     float mTopMargin = 0, mSpacing = 0;
     float mLeftMargin = 0, mBottomMargin = 0;
     int mTotalLines = 32;
     int mSelectedLine = 0;
 
-    // Text storage
     std::map<int, std::string> mTextLines;
     std::map<int, uint64_t> mLineSeeds;
 
-    // Transform matrix (4x4, column-major)
     float mContentMatrix[16] = {
         1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
     };
     float mMvpMatrix[16];
 
-    // Flags
     bool mFontAtlasCreated = false;
 
-    // Helpers
     bool compileShaders();
     bool createGrainTexture();
     void updateMvpMatrix();

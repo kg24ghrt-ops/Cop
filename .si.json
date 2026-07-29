@@ -17,6 +17,14 @@
     ".kts": {
       "enabled": false,
       "run": "kotlin-language-server"
+    },
+    ".cpp": {
+      "enabled": false,
+      "run": "clangd"
+    },
+    ".h": {
+      "enabled": false,
+      "run": "clangd"
     }
   }
 }

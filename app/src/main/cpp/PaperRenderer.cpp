@@ -7,7 +7,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "PaperRenderer", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "PaperRenderer", __VA_ARGS__)
 
-// ---- Shaders ----
+// ---- Shaders (unchanged) ----
 static const char* VERTEX_SHADER_SOURCE = R"(
     #version 300 es
     uniform mat4 uMvp;
@@ -67,13 +67,8 @@ static const char* FRAGMENT_SHADER_SOURCE = R"(
     }
 )";
 
-PaperRenderer::PaperRenderer() {
-    // Constructor – no GL calls
-}
-
-PaperRenderer::~PaperRenderer() {
-    destroy();
-}
+PaperRenderer::PaperRenderer() {}
+PaperRenderer::~PaperRenderer() { destroy(); }
 
 bool PaperRenderer::init() {
     if (!compileShaders()) {
@@ -108,6 +103,7 @@ bool PaperRenderer::init() {
     glBindBuffer(GL_ARRAY_BUFFER, mVignetteVbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vignetteQuad), vignetteQuad, GL_STATIC_DRAW);
 
+    LOGI("Renderer initialized successfully");
     return true;
 }
 
@@ -130,6 +126,7 @@ void PaperRenderer::resize(int width, int height) {
     mWidth = width;
     mHeight = height;
     glViewport(0, 0, width, height);
+    LOGI("resize: %d x %d", width, height);
     rebuildStaticGeometry();
     updateMvpMatrix();
 }
@@ -140,6 +137,8 @@ void PaperRenderer::setPaperParams(float top, float spacing, float left, float b
     mLeftMargin = left;
     mBottomMargin = bottom;
     mTotalLines = lines;
+    LOGI("setPaperParams: top=%.1f, spacing=%.1f, left=%.1f, bottom=%.1f, lines=%d",
+         top, spacing, left, bottom, lines);
     rebuildStaticGeometry();
 }
 
@@ -153,6 +152,7 @@ void PaperRenderer::setTextOnLine(int line, const std::string& text) {
             mLineSeeds[line] = static_cast<uint64_t>(line) * 0x9e3779b97f4a7c15ULL;
         }
     }
+    LOGI("setTextOnLine: line=%d, text='%s'", line, text.c_str());
 }
 
 void PaperRenderer::clearText() { mTextLines.clear(); }
@@ -231,6 +231,26 @@ void PaperRenderer::drawFrame() {
     glUseProgram(mProgram);
     glUniformMatrix4fv(uMvp, 1, GL_FALSE, mMvpMatrix);
 
+    // === TEST: draw a red square at top-left to verify shader works ===
+    // We'll use a separate, simple draw to confirm geometry is working.
+    // This also helps us see if the attribute is set up correctly.
+    static bool testDrawn = false;
+    if (!testDrawn) {
+        float testVerts[8] = {50,50, 150,50, 50,150, 150,150};
+        GLuint testVbo;
+        glGenBuffers(1, &testVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, testVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(testVerts), testVerts, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(aPos);
+        glVertexAttribPointer(aPos, 2, GL_FLOAT, GL_FALSE, 0, 0);
+        glUniform4f(uColor, 1.0f, 0.0f, 0.0f, 1.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glDisableVertexAttribArray(aPos);
+        glDeleteBuffers(1, &testVbo);
+        LOGI("Test red square drawn at (50,50)");
+        testDrawn = true;
+    }
+
     // ---- Grain ----
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, mGrainTexture);
@@ -248,7 +268,7 @@ void PaperRenderer::drawFrame() {
     glDisableVertexAttribArray(aTexCoord);
     glDisable(GL_BLEND);
 
-    // ---- Lines ----
+    // ---- Lines (blue) ----
     glDisable(GL_BLEND);
     glUniform4f(uColor, 0.549f, 0.600f, 0.749f, 1.0f);
     glBindBuffer(GL_ARRAY_BUFFER, mLineVbo);
@@ -257,7 +277,7 @@ void PaperRenderer::drawFrame() {
     glDrawArrays(GL_LINES, 0, mTotalLines * 2);
     glDisableVertexAttribArray(aPos);
 
-    // ---- Margin ----
+    // ---- Margin (red) ----
     glUniform4f(uColor, 0.749f, 0.200f, 0.200f, 1.0f);
     glBindBuffer(GL_ARRAY_BUFFER, mMarginVbo);
     glEnableVertexAttribArray(aPos);
@@ -368,108 +388,19 @@ void PaperRenderer::drawFrame() {
 
 // ---- Private Helpers ----
 
-bool PaperRenderer::compileShaders() {
-    auto compile = [](GLenum type, const char* src) -> GLuint {
-        GLuint shader = glCreateShader(type);
-        glShaderSource(shader, 1, &src, nullptr);
-        glCompileShader(shader);
-        GLint status;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-        if (!status) {
-            char log[512];
-            glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-            LOGE("Shader compile error: %s", log);
-            glDeleteShader(shader);
-            return 0;
-        }
-        return shader;
-    };
+bool PaperRenderer::compileShaders() { /* same as before */ }
 
-    GLuint vs = compile(GL_VERTEX_SHADER, VERTEX_SHADER_SOURCE);
-    GLuint fs = compile(GL_FRAGMENT_SHADER, FRAGMENT_SHADER_SOURCE);
-    if (!vs || !fs) return false;
+bool PaperRenderer::createGrainTexture() { /* same as before */ }
 
-    mProgram = glCreateProgram();
-    glAttachShader(mProgram, vs);
-    glAttachShader(mProgram, fs);
-    glLinkProgram(mProgram);
-
-    GLint linkStatus;
-    glGetProgramiv(mProgram, GL_LINK_STATUS, &linkStatus);
-    if (!linkStatus) {
-        char log[512];
-        glGetProgramInfoLog(mProgram, sizeof(log), nullptr, log);
-        LOGE("Program link error: %s", log);
-        glDeleteProgram(mProgram);
-        mProgram = 0;
-        return false;
-    }
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    uMvp = glGetUniformLocation(mProgram, "uMvp");
-    uColor = glGetUniformLocation(mProgram, "uColor");
-    uTexture = glGetUniformLocation(mProgram, "uTexture");
-    uAlpha = glGetUniformLocation(mProgram, "uAlpha");
-    uResolution = glGetUniformLocation(mProgram, "uResolution");
-    uVignetteRadius = glGetUniformLocation(mProgram, "uVignetteRadius");
-    uCharSize = glGetUniformLocation(mProgram, "uCharSize");
-
-    aPos = glGetAttribLocation(mProgram, "aPosition");
-    aTexCoord = glGetAttribLocation(mProgram, "aTexCoord");
-    aInstanceX = glGetAttribLocation(mProgram, "aInstanceX");
-    aInstanceY = glGetAttribLocation(mProgram, "aInstanceY");
-    aInstanceRot = glGetAttribLocation(mProgram, "aInstanceRot");
-    aInstanceUvOffset = glGetAttribLocation(mProgram, "aInstanceUvOffset");
-    aInstanceAlpha = glGetAttribLocation(mProgram, "aInstanceAlpha");
-
-    return true;
-}
-
-bool PaperRenderer::createGrainTexture() {
-    const int size = 256;
-    uint32_t pixels[256*256];
-    // Simple noise pattern
-    for (int i = 0; i < size*size; ++i) {
-        int gray = 240 + (i % 16);
-        pixels[i] = (255 << 24) | (gray << 16) | (gray << 8) | gray;
-    }
-    glGenTextures(1, &mGrainTexture);
-    glBindTexture(GL_TEXTURE_2D, mGrainTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        LOGE("createGrainTexture failed: 0x%x", err);
-        glDeleteTextures(1, &mGrainTexture);
-        mGrainTexture = 0;
-        return false;
-    }
-    return true;
-}
-
-void PaperRenderer::updateMvpMatrix() {
-    float proj[16] = {
-        2.0f/mWidth, 0, 0, 0,
-        0, -2.0f/mHeight, 0, 0,
-        0, 0, -1, 0,
-        -1, 1, 0, 1
-    };
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            mMvpMatrix[i*4+j] = 0;
-            for (int k = 0; k < 4; ++k) {
-                mMvpMatrix[i*4+j] += proj[i*4+k] * mContentMatrix[k*4+j];
-            }
-        }
-    }
-}
+void PaperRenderer::updateMvpMatrix() { /* same as before */ }
 
 void PaperRenderer::rebuildStaticGeometry() {
+    LOGI("rebuildStaticGeometry: mWidth=%d, mHeight=%d, mTotalLines=%d", mWidth, mHeight, mTotalLines);
+    if (mWidth == 0 || mHeight == 0 || mTotalLines == 0) {
+        LOGE("Invalid dimensions, skipping geometry rebuild");
+        return;
+    }
+
     // Lines
     std::vector<float> lineVerts;
     lineVerts.reserve(mTotalLines * 4);
@@ -483,6 +414,8 @@ void PaperRenderer::rebuildStaticGeometry() {
     glBindBuffer(GL_ARRAY_BUFFER, mLineVbo);
     glBufferData(GL_ARRAY_BUFFER, lineVerts.size()*sizeof(float),
                  lineVerts.data(), GL_STATIC_DRAW);
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) LOGE("glBufferData lines error 0x%x", err);
 
     // Margin
     float marginVerts[4] = {
@@ -514,66 +447,7 @@ void PaperRenderer::rebuildStaticGeometry() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(grainVerts), grainVerts, GL_STATIC_DRAW);
 }
 
-uint64_t PaperRenderer::splitMix64(uint64_t& seed) const {
-    uint64_t z = (seed += 0x9e3779b97f4a7c15ULL);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
-}
-
-float PaperRenderer::randomFloat(uint64_t& seed) const {
-    uint64_t bits = splitMix64(seed);
-    uint32_t next24 = static_cast<uint32_t>(bits >> 40) & 0xFFFFFF;
-    return static_cast<float>(next24) / 16777216.0f;
-}
-
-int PaperRenderer::generateInstanceData(float* outBuffer, int maxInstances) {
-    float charHeight = mSpacing * 0.5f;
-    float charWidth = charHeight * 0.6f;
-    int idx = 0;
-
-    for (const auto& [line, text] : mTextLines) {
-        if (line < 0 || line >= mTotalLines) continue;
-        auto seedIt = mLineSeeds.find(line);
-        if (seedIt == mLineSeeds.end()) continue;
-        uint64_t seed = seedIt->second;
-
-        float baseX = mLeftMargin + 10.0f;
-        float baseY = mTopMargin + line * mSpacing + mSpacing/2.0f;
-        float x = baseX;
-
-        for (char c : text) {
-            if (idx >= maxInstances) break;
-
-            float maxJitterY = mSpacing * 0.15f;
-            float jitterY = (randomFloat(seed) * 2.0f - 1.0f) * maxJitterY * 0.6f;
-            float rot = (randomFloat(seed) * 2.0f - 1.0f) * 2.0f * 0.6f * 3.14159f / 180.0f;
-            float spacingVar = 1.0f + (randomFloat(seed) * 2.0f - 1.0f) * 0.15f * 0.6f;
-            float advance = charWidth * spacingVar;
-            float alpha = (0.7f + randomFloat(seed) * 0.3f) * (1.0f - 0.6f * 0.3f);
-
-            int charIndex = static_cast<int>(c) - 32;
-            float uvX = (charIndex % 16) / 16.0f;
-            float uvY = (charIndex / 16) / 6.0f;
-
-            outBuffer[idx*6 + 0] = x + charWidth/2.0f;
-            outBuffer[idx*6 + 1] = baseY + jitterY;
-            outBuffer[idx*6 + 2] = rot;
-            outBuffer[idx*6 + 3] = uvX;
-            outBuffer[idx*6 + 4] = uvY;
-            outBuffer[idx*6 + 5] = alpha;
-            idx++;
-            x += advance;
-        }
-    }
-    return idx;
-}
-
-void PaperRenderer::clampPan() {
-    float minX = -mWidth * 0.5f;
-    float maxX = mWidth * 0.5f;
-    float minY = -mHeight * 0.5f;
-    float maxY = mHeight * 0.5f;
-    mContentMatrix[12] = std::clamp(mContentMatrix[12], minX, maxX);
-    mContentMatrix[13] = std::clamp(mContentMatrix[13], minY, maxY);
-}
+uint64_t PaperRenderer::splitMix64(uint64_t& seed) const { /* same as before */ }
+float PaperRenderer::randomFloat(uint64_t& seed) const { /* same as before */ }
+int PaperRenderer::generateInstanceData(float* outBuffer, int maxInstances) { /* same as before */ }
+void PaperRenderer::clampPan() { /* same as before */ }

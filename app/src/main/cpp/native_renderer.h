@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <map>
 #include <string>
-#include <random>
 #include <vector>
 
 class NativeRenderer {
@@ -17,7 +16,7 @@ public:
     void setSelectedLine(int line);
     void setHumanize(float factor);
 
-    // Returns number of instances written to outBuffer (x, y, rotation per char)
+    // Returns number of instances written to outBuffer (each = 6 floats: x, y, rot, uvX, uvY, alpha)
     int generateFrame(const float* contentMatrix, float* outInstanceBuffer, int maxInstances);
 
 private:
@@ -28,9 +27,8 @@ private:
     float mHumanize = 0.6f;
 
     std::map<int, std::string> mTextLines;
-    std::map<int, uint64_t> mLineSeeds; // 64-bit seeds for deterministic jitter
+    std::map<int, uint64_t> mLineSeeds;
 
-    // Precomputed line Y positions (cached for speed)
     std::vector<float> mLineY;
 
     uint64_t splitMix64(uint64_t& seed) const;

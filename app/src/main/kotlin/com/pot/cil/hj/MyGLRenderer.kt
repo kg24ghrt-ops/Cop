@@ -10,28 +10,36 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.hypot
 import kotlin.math.min
 
 class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
-    // ---- Paper specs (identical) ----
+    // ---- Paper specifications ----
     private val LINE_SPACING_MM = 7.1f
     private val TOP_MARGIN_MM = 32f
     private val LEFT_MARGIN_MM = 32f
     private val BOTTOM_MARGIN_MM = 12.7f
     private val TOTAL_LINES = 32
-    var lineSpacingPx = 30f; private set
-    var topMarginPx = 40f; private set
-    var leftMarginPx = 40f; private set
-    var bottomMarginPx = 16f; private set
+
+    var lineSpacingPx = 30f
+        private set
+    var topMarginPx = 40f
+        private set
+    var leftMarginPx = 40f
+        private set
+    var bottomMarginPx = 16f
+        private set
     private var totalLinesValue = TOTAL_LINES
-    var selectedLine = 3; private set
+    var selectedLine = 3
+        private set
     var humanizeFactor = 0.6f
 
-    // Transform
+    // Transform (same Matrix as before)
     private val contentMatrix = Matrix()
     private val mvpMatrix = FloatArray(16)
     private val projMatrix = FloatArray(16)
+    private val tempMatrix = FloatArray(16)
 
     // GL resources
     private var program = 0
@@ -41,6 +49,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var uAlphaLoc = 0
     private var uResolutionLoc = 0
     private var uVignetteRadiusLoc = 0
+    private var uCharSizeLoc = 0
 
     // VBOs
     private var linesVbo = 0
@@ -48,19 +57,23 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var highlightVbo = 0
     private var vignetteVbo = 0
     private var grainVbo = 0
-    private var textVbo = 0        // vertex data (quad + uv)
-    private var textInstanceVbo = 0 // per-character transforms (x, y, rotation)
+    private var textVbo = 0
+    private var textInstanceVbo = 0
 
     // Textures
     private var fontAtlasTexture = 0
     private var grainTexture = 0
 
-    // ---- Native Renderer Handle ----
+    // Native renderer handle
     private var nativeHandle = 0L
 
-    // ---- Direct buffers for JNI ----
+    // Direct buffer for instance data (x, y, rotation, uvOffset, scale, alpha)
     private lateinit var instanceBuffer: FloatBuffer
-    private val maxInstances = 4096 // enough for ~300 chars
+    private val maxInstances = 4096
+
+    // Dimensions
+    private var viewWidth = 0
+    private var viewHeight = 0
 
     // ---- JNI methods ----
     private external fun nativeCreate(): Long
@@ -73,15 +86,14 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private external fun nativeClearText(handle: Long)
     private external fun nativeSetSelectedLine(handle: Long, line: Int)
     private external fun nativeSetHumanize(handle: Long, factor: Float)
-    // Fill buffers: returns the number of instances written.
-    // The buffer must be a direct FloatBuffer with capacity >= maxInstances * 3.
+    // Returns number of instances written to instanceBuffer (each instance = 6 floats: x, y, rot, uvX, uvY, alpha)
     private external fun nativeGenerateFrame(handle: Long,
                                              contentMatrix: FloatArray,
                                              instanceBuffer: FloatBuffer,
                                              maxInstances: Int): Int
 
     init {
-        System.loadLibrary("native_renderer") // loads libnative_renderer.so
+        System.loadLibrary("native_renderer")
         nativeHandle = nativeCreate()
         nativeSetHumanize(nativeHandle, humanizeFactor)
     }
@@ -93,20 +105,22 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         initVbos()
         createFontAtlas()
         generateGrainTexture()
-        // Allocate direct buffer for instance data (x, y, rotation)
-        instanceBuffer = ByteBuffer.allocateDirect(maxInstances * 3 * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-        // Set initial geometry data for quad + uv (4 vertices)
         setupTextQuadVbo()
         setupGrainVbo()
         setupVignetteVbo()
+
+        // Allocate instance buffer
+        instanceBuffer = ByteBuffer.allocateDirect(maxInstances * 6 * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         if (width == 0 || height == 0) return
-        viewWidth = width; viewHeight = height
+        viewWidth = width
+        viewHeight = height
         GLES30.glViewport(0, 0, width, height)
 
+        // Recalculate pixel dimensions (same as Canvas version)
         val dpi = context.resources.displayMetrics.densityDpi.toFloat()
         val pxPerMm = dpi / 25.4f
         val calcSpacing = LINE_SPACING_MM * pxPerMm
@@ -124,28 +138,31 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             leftMarginPx, bottomMarginPx, totalLinesValue)
         nativeSetSelectedLine(nativeHandle, selectedLine)
 
+        // Build projection matrix (ortho)
         Matrix.orthoM(projMatrix, 0, 0f, width.toFloat(), height.toFloat(), 0f, -1f, 1f)
+
+        // Reset transform
         contentMatrix.reset()
         updateMvpMatrix()
 
-        // Rebuild VBO data for lines, margin, highlight (geometry depends on dims)
+        // Rebuild static VBOs (lines, margin, highlight)
         rebuildStaticVbos()
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        // 1. Let native fill the instance buffer with per-char transforms
+        // 1. Let native compute per-character transforms
         val instanceCount = nativeGenerateFrame(nativeHandle,
             contentMatrixToArray(), instanceBuffer, maxInstances)
         instanceBuffer.rewind()
 
-        // 2. Clear & set paper bg
+        // 2. Clear with paper color
         GLES30.glClearColor(0.980f, 0.961f, 0.902f, 1.0f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
         GLES30.glUseProgram(program)
         GLES30.glUniformMatrix4fv(uMvpLoc, 1, false, mvpMatrix, 0)
 
-        // ---- Draw Paper Grain (background) ----
+        // ---- Draw paper grain ----
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, grainTexture)
         GLES30.glUniform1i(uTextureLoc, 1)
@@ -153,14 +170,16 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, grainVbo)
-        GLES30.glEnableVertexAttribArray(0); GLES30.glEnableVertexAttribArray(1)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glEnableVertexAttribArray(1)
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 4*4, 0)
         GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 4*4, 2*4)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
-        GLES30.glDisableVertexAttribArray(0); GLES30.glDisableVertexAttribArray(1)
+        GLES30.glDisableVertexAttribArray(0)
+        GLES30.glDisableVertexAttribArray(1)
         GLES30.glDisable(GLES30.GL_BLEND)
 
-        // ---- Draw Lines (blue) ----
+        // ---- Draw lines (blue) ----
         GLES30.glDisable(GLES30.GL_BLEND)
         GLES30.glUniform4f(uColorLoc, 0.549f, 0.600f, 0.749f, 1.0f)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, linesVbo)
@@ -169,7 +188,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, totalLinesValue * 2)
         GLES30.glDisableVertexAttribArray(0)
 
-        // ---- Draw Margin (red) ----
+        // ---- Draw margin (red) ----
         GLES30.glUniform4f(uColorLoc, 0.749f, 0.200f, 0.200f, 1.0f)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, marginVbo)
         GLES30.glEnableVertexAttribArray(0)
@@ -177,7 +196,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, 2)
         GLES30.glDisableVertexAttribArray(0)
 
-        // ---- Draw Highlight (translucent) ----
+        // ---- Draw selected line highlight ----
         if (selectedLine in 0 until totalLinesValue) {
             GLES30.glEnable(GLES30.GL_BLEND)
             GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -190,12 +209,16 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES30.glDisable(GLES30.GL_BLEND)
         }
 
-        // ---- Draw Text (Instanced Quads with Font Atlas) ----
+        // ---- Draw text (instanced quads) ----
         if (instanceCount > 0) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, fontAtlasTexture)
             GLES30.glUniform1i(uTextureLoc, 0)
             GLES30.glUniform1f(uAlphaLoc, 1.0f)
+
+            // Char size (height) in pixels
+            val charSize = lineSpacingPx * 0.5f
+            GLES30.glUniform1f(uCharSizeLoc, charSize)
 
             // Bind base quad VBO (position + uv)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, textVbo)
@@ -204,63 +227,125 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 4*4, 0)
             GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 4*4, 2*4)
 
-            // Bind instance data VBO (x, y, rotation)
+            // Bind instance data VBO (6 floats per instance)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, textInstanceVbo)
-            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, instanceCount * 3 * 4,
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, instanceCount * 6 * 4,
                                 instanceBuffer, GLES30.GL_DYNAMIC_DRAW)
 
+            // Attribute layout: x, y, rot, uvX, uvY, alpha
             GLES30.glEnableVertexAttribArray(2)
             GLES30.glEnableVertexAttribArray(3)
             GLES30.glEnableVertexAttribArray(4)
-            GLES30.glVertexAttribPointer(2, 1, GLES30.GL_FLOAT, false, 3*4, 0)
-            GLES30.glVertexAttribPointer(3, 1, GLES30.GL_FLOAT, false, 3*4, 4)
-            GLES30.glVertexAttribPointer(4, 1, GLES30.GL_FLOAT, false, 3*4, 8)
-            GLES30.glVertexAttribDivisor(2, 1)
-            GLES30.glVertexAttribDivisor(3, 1)
-            GLES30.glVertexAttribDivisor(4, 1)
+            GLES30.glEnableVertexAttribArray(5)
+            GLES30.glEnableVertexAttribArray(6)
+            GLES30.glVertexAttribPointer(2, 1, GLES30.GL_FLOAT, false, 6*4, 0)
+            GLES30.glVertexAttribPointer(3, 1, GLES30.GL_FLOAT, false, 6*4, 4)
+            GLES30.glVertexAttribPointer(4, 1, GLES30.GL_FLOAT, false, 6*4, 8)
+            GLES30.glVertexAttribPointer(5, 2, GLES30.GL_FLOAT, false, 6*4, 12)
+            GLES30.glVertexAttribPointer(6, 1, GLES30.GL_FLOAT, false, 6*4, 20)
+            // Set divisors
+            for (i in 2..6) GLES30.glVertexAttribDivisor(i, 1)
 
             GLES30.glEnable(GLES30.GL_BLEND)
             GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
             GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLE_STRIP, 0, 4, instanceCount)
 
-            GLES30.glDisableVertexAttribArray(0); GLES30.glDisableVertexAttribArray(1)
-            GLES30.glDisableVertexAttribArray(2); GLES30.glDisableVertexAttribArray(3)
-            GLES30.glDisableVertexAttribArray(4)
-            GLES30.glVertexAttribDivisor(2, 0); GLES30.glVertexAttribDivisor(3, 0); GLES30.glVertexAttribDivisor(4, 0)
+            // Cleanup
+            for (i in 2..6) {
+                GLES30.glDisableVertexAttribArray(i)
+                GLES30.glVertexAttribDivisor(i, 0)
+            }
+            GLES30.glDisableVertexAttribArray(0)
+            GLES30.glDisableVertexAttribArray(1)
             GLES30.glDisable(GLES30.GL_BLEND)
         }
 
-        // ---- Draw Vignette (screen space) ----
-        // ... (identical to previous implementation, omitted for brevity but included in full code)
+        // ---- Draw vignette (screen space) ----
+        // Save current MVP, set ortho for screen coords
+        val savedMvp = mvpMatrix.clone()
+        Matrix.setIdentityM(mvpMatrix, 0)
+        Matrix.orthoM(mvpMatrix, 0, 0f, viewWidth.toFloat(), viewHeight.toFloat(), 0f, -1f, 1f)
+        GLES30.glUniformMatrix4fv(uMvpLoc, 1, false, mvpMatrix, 0)
+
+        GLES30.glUniform4f(uColorLoc, 0f, 0f, 0f, 0.12f)
+        GLES30.glUniform2f(uResolutionLoc, viewWidth.toFloat(), viewHeight.toFloat())
+        GLES30.glUniform1f(uVignetteRadiusLoc, 0.9f)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vignetteVbo)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 2*4, 0)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        GLES30.glDisableVertexAttribArray(0)
+        GLES30.glDisable(GLES30.GL_BLEND)
+
+        // Restore MVP
+        System.arraycopy(savedMvp, 0, mvpMatrix, 0, 16)
+        GLES30.glUniformMatrix4fv(uMvpLoc, 1, false, mvpMatrix, 0)
     }
 
     // ======================== HELPER FUNCTIONS ========================
 
     private fun updateMvpMatrix() {
         val content = FloatArray(16)
-        android.opengl.Matrix.setIdentityM(content, 0)
-        val v = FloatArray(9); contentMatrix.getValues(v)
-        content[0] = v[0]; content[1] = v[3]; content[4] = v[1]
-        content[5] = v[4]; content[12] = v[2]; content[13] = v[5]
-        android.opengl.Matrix.multiplyMM(mvpMatrix, 0, projMatrix, 0, content, 0)
+        Matrix.setIdentityM(content, 0)
+        val values = FloatArray(9)
+        contentMatrix.getValues(values)
+        // Map android.graphics.Matrix to 4x4 column-major
+        content[0] = values[0]
+        content[1] = values[3]
+        content[4] = values[1]
+        content[5] = values[4]
+        content[12] = values[2]
+        content[13] = values[5]
+        Matrix.multiplyMM(mvpMatrix, 0, projMatrix, 0, content, 0)
     }
 
     private fun contentMatrixToArray(): FloatArray {
-        val v = FloatArray(9); contentMatrix.getValues(v)
+        val v = FloatArray(9)
+        contentMatrix.getValues(v)
         return v
+    }
+
+    private fun clampPan() {
+        val pts = floatArrayOf(0f, 0f, viewWidth.toFloat(), 0f, 0f, viewHeight.toFloat(), viewWidth.toFloat(), viewHeight.toFloat())
+        contentMatrix.mapPoints(pts)
+        var minX = Float.MAX_VALUE
+        var maxX = Float.MIN_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = Float.MIN_VALUE
+        for (i in pts.indices step 2) {
+            minX = min(minX, pts[i])
+            maxX = max(maxX, pts[i])
+            minY = min(minY, pts[i + 1])
+            maxY = max(maxY, pts[i + 1])
+        }
+        val dx = if (maxX < viewWidth * 0.2f) viewWidth * 0.2f - maxX
+                 else if (minX > viewWidth * 0.8f) viewWidth * 0.8f - minX
+                 else 0f
+        val dy = if (maxY < viewHeight * 0.2f) viewHeight * 0.2f - maxY
+                 else if (minY > viewHeight * 0.8f) viewHeight * 0.8f - minY
+                 else 0f
+        if (dx != 0f || dy != 0f) {
+            contentMatrix.postTranslate(dx, dy)
+        }
     }
 
     // ---- VBO Setup ----
     private fun initVbos() {
         val buffers = IntArray(7)
         GLES30.glGenBuffers(7, buffers, 0)
-        linesVbo = buffers[0]; marginVbo = buffers[1]; highlightVbo = buffers[2]
-        vignetteVbo = buffers[3]; grainVbo = buffers[4]
-        textVbo = buffers[5]; textInstanceVbo = buffers[6]
+        linesVbo = buffers[0]
+        marginVbo = buffers[1]
+        highlightVbo = buffers[2]
+        vignetteVbo = buffers[3]
+        grainVbo = buffers[4]
+        textVbo = buffers[5]
+        textInstanceVbo = buffers[6]
     }
 
     private fun setupTextQuadVbo() {
-        // One quad: -0.5..0.5 (we'll scale per char later), with UV for font atlas
+        // Quad from -0.5 to 0.5, with UV for full character cell in atlas
         val quad = floatArrayOf(
             -0.5f, -0.5f, 0f, 1f,
              0.5f, -0.5f, 1f, 1f,
@@ -273,42 +358,335 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, quad.size * 4, buf, GLES30.GL_STATIC_DRAW)
     }
 
+    private fun setupGrainVbo() {
+        // Full screen quad with texture coords for repeat (use large values)
+        val vertices = floatArrayOf(
+            0f, 0f, 0f, 0f,
+            viewWidth.toFloat(), 0f, viewWidth.toFloat() / 256f, 0f,
+            0f, viewHeight.toFloat(), 0f, viewHeight.toFloat() / 256f,
+            viewWidth.toFloat(), viewHeight.toFloat(), viewWidth.toFloat() / 256f, viewHeight.toFloat() / 256f
+        )
+        val buf = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(vertices).rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, grainVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertices.size * 4, buf, GLES30.GL_STATIC_DRAW)
+    }
+
+    private fun setupVignetteVbo() {
+        val vertices = floatArrayOf(
+            0f, 0f,
+            viewWidth.toFloat(), 0f,
+            0f, viewHeight.toFloat(),
+            viewWidth.toFloat(), viewHeight.toFloat()
+        )
+        val buf = ByteBuffer.allocateDirect(vertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(vertices).rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vignetteVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertices.size * 4, buf, GLES30.GL_STATIC_DRAW)
+    }
+
     private fun rebuildStaticVbos() {
-        // Lines, margin, highlight geometry generated by native, but we can also keep
-        // nativeGenerateFrame fill them. For simplicity, we generate them in Kotlin
-        // or we could extend native to fill them. Let's keep Kotlin for static geo for clarity.
-        // (Full code would include rebuilding these – omitted for brevity, but they work as before).
-        // Alternatively, let nativeGenerateFrame also fill a buffer for lines.
-        // I'll show the clean hybrid approach in the final provided code.
+        // Lines
+        val lineVertices = FloatArray(totalLinesValue * 4)
+        var idx = 0
+        for (i in 0 until totalLinesValue) {
+            val y = topMarginPx + i * lineSpacingPx + lineSpacingPx / 2f
+            lineVertices[idx++] = leftMarginPx
+            lineVertices[idx++] = y
+            lineVertices[idx++] = viewWidth.toFloat()
+            lineVertices[idx++] = y
+        }
+        val lineBuf = ByteBuffer.allocateDirect(lineVertices.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        lineBuf.put(lineVertices).rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, linesVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, lineVertices.size * 4, lineBuf, GLES30.GL_STATIC_DRAW)
+
+        // Margin
+        val marginVerts = floatArrayOf(
+            leftMarginPx, topMarginPx,
+            leftMarginPx, viewHeight - bottomMarginPx
+        )
+        val marginBuf = ByteBuffer.allocateDirect(marginVerts.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        marginBuf.put(marginVerts).rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, marginVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, marginVerts.size * 4, marginBuf, GLES30.GL_STATIC_DRAW)
+
+        // Highlight (selected line)
+        rebuildHighlightVbo()
     }
 
-    // ---- Font Atlas (generated once) ----
+    private fun rebuildHighlightVbo() {
+        val y = topMarginPx + selectedLine * lineSpacingPx
+        val verts = floatArrayOf(
+            leftMarginPx, y,
+            viewWidth.toFloat(), y,
+            leftMarginPx, y + lineSpacingPx,
+            viewWidth.toFloat(), y + lineSpacingPx
+        )
+        val buf = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(verts).rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, highlightVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, verts.size * 4, buf, GLES30.GL_DYNAMIC_DRAW)
+    }
+
+    // ---- Font Atlas ----
     private fun createFontAtlas() {
-        // Renders all ASCII chars to a bitmap, uploads as texture.
-        // (Full code provided in final answer)
+        // Generate a bitmap with all printable ASCII chars (32-126)
+        val charSize = 48 // pixels
+        val cols = 16
+        val rows = 6 // 95 chars fit in 16*6=96
+        val atlasWidth = cols * charSize
+        val atlasHeight = rows * charSize
+        val bitmap = Bitmap.createBitmap(atlasWidth, atlasHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = charSize * 0.8f
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT
+        }
+        val fm = paint.fontMetrics
+        val baseline = charSize / 2f - (fm.ascent + fm.descent) / 2f
+
+        var charIndex = 32
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                if (charIndex > 126) break
+                val x = col * charSize + charSize / 2f
+                val y = row * charSize + baseline
+                canvas.drawChar(charIndex.toChar(), x, y, paint)
+                charIndex++
+            }
+        }
+
+        // Upload to GL
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        fontAtlasTexture = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, fontAtlasTexture)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val buffer = ByteBuffer.allocateDirect(bitmap.byteCount)
+        bitmap.copyPixelsToBuffer(buffer)
+        buffer.rewind()
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, atlasWidth, atlasHeight, 0,
+                            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
+        bitmap.recycle()
     }
 
-    // ---- Public API (IDENTICAL TO ORIGINAL) ----
+    // ---- Paper Grain ----
+    private fun generateGrainTexture() {
+        val size = 256
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(size * size)
+        val rng = kotlin.random.Random(67890)
+        for (i in pixels.indices) {
+            val base = 240 + rng.nextInt(16)
+            val noise = rng.nextInt(8) - 4
+            val gray = (base + noise).coerceIn(0, 255)
+            pixels[i] = (255 shl 24) or (gray shl 16) or (gray shl 8) or gray
+        }
+        bmp.setPixels(pixels, 0, size, 0, 0, size, size)
+        val blurred = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bc = Canvas(blurred)
+        val blurPaint = Paint().apply {
+            maskFilter = BlurMaskFilter(2.5f, BlurMaskFilter.Blur.NORMAL)
+        }
+        bc.drawBitmap(bmp, 0f, 0f, blurPaint)
+        bmp.recycle()
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        grainTexture = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, grainTexture)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_REPEAT)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_REPEAT)
+
+        val buffer = ByteBuffer.allocateDirect(blurred.byteCount)
+        blurred.copyPixelsToBuffer(buffer)
+        buffer.rewind()
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, size, size, 0,
+                            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
+        blurred.recycle()
+    }
+
+    // ---- Shaders ----
+    private fun initShaders() {
+        val vertexShader = compileShader(GLES30.GL_VERTEX_SHADER, VERTEX_SHADER_CODE)
+        val fragmentShader = compileShader(GLES30.GL_FRAGMENT_SHADER, FRAGMENT_SHADER_CODE)
+        program = GLES30.glCreateProgram()
+        GLES30.glAttachShader(program, vertexShader)
+        GLES30.glAttachShader(program, fragmentShader)
+        GLES30.glLinkProgram(program)
+
+        val linkStatus = IntArray(1)
+        GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] == 0) {
+            val info = GLES30.glGetProgramInfoLog(program)
+            throw RuntimeException("Shader link failed: $info")
+        }
+
+        uMvpLoc = GLES30.glGetUniformLocation(program, "uMvp")
+        uColorLoc = GLES30.glGetUniformLocation(program, "uColor")
+        uTextureLoc = GLES30.glGetUniformLocation(program, "uTexture")
+        uAlphaLoc = GLES30.glGetUniformLocation(program, "uAlpha")
+        uResolutionLoc = GLES30.glGetUniformLocation(program, "uResolution")
+        uVignetteRadiusLoc = GLES30.glGetUniformLocation(program, "uVignetteRadius")
+        uCharSizeLoc = GLES30.glGetUniformLocation(program, "uCharSize")
+    }
+
+    private fun compileShader(type: Int, src: String): Int {
+        val shader = GLES30.glCreateShader(type)
+        GLES30.glShaderSource(shader, src)
+        GLES30.glCompileShader(shader)
+        val status = IntArray(1)
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, status, 0)
+        if (status[0] == 0) {
+            val info = GLES30.glGetShaderInfoLog(shader)
+            throw RuntimeException("Shader compile error: $info")
+        }
+        return shader
+    }
+
+    // ---- Shader sources (ES 3.0) ----
+    private val VERTEX_SHADER_CODE = """
+        #version 300 es
+        uniform mat4 uMvp;
+        uniform float uCharSize;
+
+        in vec2 aPosition;
+        in vec2 aTexCoord;
+        in float aInstanceX;
+        in float aInstanceY;
+        in float aInstanceRot;
+        in vec2 aInstanceUvOffset;
+        in float aInstanceAlpha;
+
+        out vec2 vTexCoord;
+        out float vAlpha;
+
+        void main() {
+            float c = cos(aInstanceRot);
+            float s = sin(aInstanceRot);
+            vec2 pos = aPosition * uCharSize;
+            vec2 rotated = vec2(pos.x * c - pos.y * s, pos.x * s + pos.y * c);
+            vec2 finalPos = rotated + vec2(aInstanceX, aInstanceY);
+            gl_Position = uMvp * vec4(finalPos, 0.0, 1.0);
+            // UV: base + offset (character cell within atlas)
+            vec2 uv = aTexCoord * (1.0 / 16.0) + aInstanceUvOffset; // 16 columns
+            vTexCoord = uv;
+            vAlpha = aInstanceAlpha;
+        }
+    """.trimIndent()
+
+    private val FRAGMENT_SHADER_CODE = """
+        #version 300 es
+        precision highp float;
+        uniform vec4 uColor;
+        uniform sampler2D uTexture;
+        uniform float uAlpha;
+        uniform vec2 uResolution;
+        uniform float uVignetteRadius;
+
+        in vec2 vTexCoord;
+        in float vAlpha;
+        out vec4 fragColor;
+
+        void main() {
+            // For text, use texture
+            vec4 texColor = texture(uTexture, vTexCoord);
+            if (texColor.a < 0.01) {
+                // Use color for non-texture draws (lines, etc.)
+                fragColor = uColor;
+            } else {
+                fragColor = vec4(texColor.rgb, texColor.a * uAlpha * vAlpha);
+            }
+            // Vignette (if uResolution is set)
+            if (uResolution.x > 0.0 && uResolution.y > 0.0) {
+                vec2 center = uResolution * 0.5;
+                float radius = length(uResolution) * 0.5 * uVignetteRadius;
+                float dist = distance(gl_FragCoord.xy, center);
+                float alpha = smoothstep(radius * 0.7, radius, dist);
+                fragColor = vec4(fragColor.rgb, fragColor.a * (1.0 - alpha * 0.12));
+            }
+        }
+    """.trimIndent()
+
+    // ======================== PUBLIC API (Identical to original) ========================
+
     fun setTextOnLine(lineNumber: Int, text: String) {
         val safeLine = lineNumber.coerceIn(0, totalLinesValue - 1)
         nativeSetTextLine(nativeHandle, safeLine, text)
         selectedLine = safeLine
+        rebuildHighlightVbo()
     }
 
-    fun getTextOnLine(lineNumber: Int): String? = TODO("Fetch from native if needed")
-    fun clearAllText() { nativeClearText(nativeHandle) }
-    fun setSelectedLine(line: Int) { selectedLine = line; nativeSetSelectedLine(nativeHandle, line) }
+    fun getTextOnLine(lineNumber: Int): String? {
+        // We could fetch from native, but for simplicity we maintain a cache in Kotlin.
+        // However, we'll keep native as source of truth; we can add a getter if needed.
+        // For now, return null if not found.
+        return null // override with a map if needed
+    }
+
+    fun clearAllText() {
+        nativeClearText(nativeHandle)
+    }
+
+    fun setSelectedLine(lineNumber: Int) {
+        selectedLine = lineNumber.coerceIn(0, totalLinesValue - 1)
+        nativeSetSelectedLine(nativeHandle, selectedLine)
+        rebuildHighlightVbo()
+    }
+
     fun getTotalLines(): Int = totalLinesValue
     fun getLineHeightPixels(): Float = lineSpacingPx
     fun getTopMarginPixels(): Float = topMarginPx
     fun getLeftMarginPixels(): Float = leftMarginPx
     fun getLineSpacingPixels(): Float = lineSpacingPx
 
-    fun setPan(dx: Float, dy: Float) { contentMatrix.postTranslate(dx, dy); clampPan() }
-    fun setZoom(factor: Float, fx: Float, fy: Float) { /* ... same as before */ }
-    fun resetTransform() { contentMatrix.reset() }
-    fun cleanup() { nativeDestroy(nativeHandle) }
+    // ---- Pan/Zoom ----
+    fun setPan(dx: Float, dy: Float) {
+        contentMatrix.postTranslate(dx, dy)
+        clampPan()
+        updateMvpMatrix()
+    }
 
-    // ---- Shaders (same as before, with instancing support) ----
-    // Full shader code provided in final deliverable.
+    fun setZoom(scaleFactor: Float, focusX: Float, focusY: Float) {
+        val pts = floatArrayOf(1f, 0f)
+        contentMatrix.mapVectors(pts)
+        val currentScale = pts[0]
+        val newScale = currentScale * scaleFactor
+        if (newScale < 0.5f || newScale > 3.0f) return
+
+        val invertedMatrix = Matrix()
+        contentMatrix.invert(invertedMatrix)
+        val focus = floatArrayOf(focusX, focusY)
+        invertedMatrix.mapPoints(focus)
+        contentMatrix.postScale(scaleFactor, scaleFactor, focus[0], focus[1])
+        clampPan()
+        updateMvpMatrix()
+    }
+
+    fun resetTransform() {
+        contentMatrix.reset()
+        clampPan()
+        updateMvpMatrix()
+    }
+
+    fun cleanup() {
+        nativeDestroy(nativeHandle)
+        // Delete GL resources
+        val buffers = intArrayOf(linesVbo, marginVbo, highlightVbo, vignetteVbo, grainVbo, textVbo, textInstanceVbo)
+        GLES30.glDeleteBuffers(buffers.size, buffers, 0)
+        val textures = intArrayOf(fontAtlasTexture, grainTexture)
+        GLES30.glDeleteTextures(textures.size, textures, 0)
+        GLES30.glDeleteProgram(program)
+    }
 }

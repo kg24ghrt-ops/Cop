@@ -13,7 +13,7 @@ import com.pot.cil.hj.ui.theme.NotebookColors
 
 /**
  * Custom EditText that sits on a single ruled line.
- * Handles line navigation, selection, and text input.
+ * Handles line navigation, selection, text input, and auto-wrap overflow.
  */
 class LineEditText @JvmOverloads constructor(
     context: Context,
@@ -24,12 +24,17 @@ class LineEditText @JvmOverloads constructor(
     var lineIndex: Int = 0
     var onLineActionListener: OnLineActionListener? = null
 
+    /** Maximum characters before auto-wrapping to next line (approximate) */
+    private var maxCharsPerLine: Int = 45
+
     interface OnLineActionListener {
         fun onNextLine(currentLine: Int)
         fun onPreviousLine(currentLine: Int)
         fun onLineTextChanged(lineIndex: Int, text: String)
         fun onLineSelected(lineIndex: Int)
         fun onLineLongPressed(lineIndex: Int)
+        /** Called when text overflows this line - returns overflow text to put on next line */
+        fun onLineOverflow(currentLine: Int, overflowText: String)
     }
 
     init {
@@ -48,16 +53,41 @@ class LineEditText @JvmOverloads constructor(
     }
 
     private fun setupListeners() {
-        // Text change
+        // Text change with overflow detection
         addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            private var beforeText: String = ""
+            private var isProcessingOverflow = false
+
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                if (!isProcessingOverflow) {
+                    beforeText = s?.toString() ?: ""
+                }
+            }
+
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
             override fun afterTextChanged(s: Editable?) {
-                onLineActionListener?.onLineTextChanged(lineIndex, s?.toString() ?: "")
+                if (isProcessingOverflow) return
+
+                val text = s?.toString() ?: ""
+                onLineActionListener?.onLineTextChanged(lineIndex, text)
+
+                // Check for overflow - if text is too long, split it
+                val overflow = checkOverflow(text)
+                if (overflow != null && overflow.isNotEmpty()) {
+                    isProcessingOverflow = true
+                    // Keep only the part that fits on this line
+                    val keepText = text.substring(0, text.length - overflow.length)
+                    setText(keepText)
+                    setSelection(keepText.length)
+                    // Send overflow to next line
+                    onLineActionListener?.onLineOverflow(lineIndex, overflow)
+                    isProcessingOverflow = false
+                }
             }
         })
 
-        // Focus and selection
+        // Focus change - ONLY notify, never trigger focus changes from here
         setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 onLineActionListener?.onLineSelected(lineIndex)
@@ -74,6 +104,41 @@ class LineEditText @JvmOverloads constructor(
             onLineActionListener?.onLineLongPressed(lineIndex)
             true
         }
+    }
+
+    /**
+     * Check if text exceeds line capacity. Returns the overflow portion
+     * that should move to the next line, or null if no overflow.
+     */
+    private fun checkOverflow(text: String): String? {
+        // Measure actual text width vs available width
+        val paint = paint
+        val availableWidth = width.toFloat() - compoundPaddingLeft - compoundPaddingRight
+        if (availableWidth <= 0) {
+            // Fallback to character count if width not measured yet
+            return if (text.length > maxCharsPerLine) {
+                text.substring(maxCharsPerLine)
+            } else null
+        }
+
+        val textWidth = paint.measureText(text)
+        return if (textWidth > availableWidth) {
+            // Find how many characters fit
+            var fitCount = text.length
+            while (fitCount > 0 && paint.measureText(text, 0, fitCount) > availableWidth) {
+                fitCount--
+            }
+            // Try to break at word boundary
+            var breakPoint = fitCount
+            if (breakPoint < text.length) {
+                // Look for last space before break point
+                val lastSpace = text.lastIndexOf(' ', breakPoint)
+                if (lastSpace > 0 && lastSpace > breakPoint - 15) {
+                    breakPoint = lastSpace + 1
+                }
+            }
+            text.substring(breakPoint)
+        } else null
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -103,11 +168,8 @@ class LineEditText @JvmOverloads constructor(
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Draw cursor as a hand-drawn style line
         super.onDraw(canvas)
-        
         if (isFocused && text?.isEmpty() == true) {
-            // Draw a subtle placeholder cursor
             val paint = Paint().apply {
                 color = NotebookColors.LineBlue
                 strokeWidth = 2f

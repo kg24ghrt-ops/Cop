@@ -1,17 +1,16 @@
 package com.pot.cil.hj.ui.view
 
 import android.content.Context
-import android.text.InputType
 import android.util.AttributeSet
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import com.pot.cil.hj.data.NoteLine
 import com.pot.cil.hj.data.NotebookPage
-import com.pot.cil.hj.ui.theme.NotebookColors
 
 /**
  * The main editor composes the paper background with editable text lines.
- * Manages line creation, focus, selection, and coordinates with PanZoomLayout.
+ * Manages line creation, focus, selection, auto-wrap, and coordinates with PanZoomLayout.
  */
 class NotebookEditor @JvmOverloads constructor(
     context: Context,
@@ -19,25 +18,24 @@ class NotebookEditor @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr) {
 
-    // ── Child Views ──────────────────────────────────────────
     lateinit var paperView: NotebookPaperView
         private set
 
     private val textContainer: FrameLayout
     private val editTexts = mutableMapOf<Int, LineEditText>()
 
-    // ── State ────────────────────────────────────────────────
     private var currentPage = NotebookPage()
     private var activeLineIndex: Int = -1
     private var selectedLines = mutableSetOf<Int>()
     private var isMultiSelectMode = false
 
-    // ── Callbacks ────────────────────────────────────────────
+    // Guard against reentrant focus operations
+    private var isSettingActiveLine = false
+
     var onPageChanged: ((NotebookPage) -> Unit)? = null
     var onLineCountChanged: ((Int) -> Unit)? = null
 
     init {
-        // Paper background
         paperView = NotebookPaperView(context).apply {
             layoutParams = LayoutParams(
                 LayoutParams.WRAP_CONTENT,
@@ -46,7 +44,6 @@ class NotebookEditor @JvmOverloads constructor(
         }
         addView(paperView)
 
-        // Text container sits exactly on top of paper
         textContainer = FrameLayout(context).apply {
             layoutParams = LayoutParams(
                 LayoutParams.WRAP_CONTENT,
@@ -55,12 +52,10 @@ class NotebookEditor @JvmOverloads constructor(
         }
         addView(textContainer)
 
-        // Initialize with empty lines
         initializeLines()
     }
 
     private fun initializeLines() {
-        // Pre-create EditTexts for all lines (optimizes scrolling)
         for (i in 0 until NotebookPaperView.LINE_COUNT) {
             createLineEditText(i)
         }
@@ -73,7 +68,7 @@ class NotebookEditor @JvmOverloads constructor(
 
         val editText = LineEditText(context).apply {
             this.lineIndex = lineIndex
-            
+
             layoutParams = LayoutParams(
                 (paperView.pageWidth - NotebookPaperView.MARGIN_LEFT - 40f).toInt(),
                 NotebookPaperView.LINE_SPACING.toInt()
@@ -82,10 +77,9 @@ class NotebookEditor @JvmOverloads constructor(
                 topMargin = (lineY - NotebookPaperView.LINE_SPACING / 2 + 5f).toInt()
             }
 
-            // Restore text if exists
             currentPage.getLineAtIndex(lineIndex)?.let { noteLine ->
                 setText(noteLine.text)
-                setSelection(noteLine.cursorPosition.coerceIn(0, noteLine.text.length))
+                setSelection(noteLine.text.length.coerceIn(0, noteLine.text.length))
             }
 
             onLineActionListener = object : LineEditText.OnLineActionListener {
@@ -105,7 +99,7 @@ class NotebookEditor @JvmOverloads constructor(
                 override fun onLineSelected(lineIndex: Int) {
                     if (isMultiSelectMode) {
                         toggleLineSelection(lineIndex)
-                    } else {
+                    } else if (!isSettingActiveLine) {
                         setActiveLine(lineIndex)
                     }
                 }
@@ -117,6 +111,21 @@ class NotebookEditor @JvmOverloads constructor(
                         toggleLineSelection(lineIndex)
                     }
                 }
+
+                override fun onLineOverflow(currentLine: Int, overflowText: String) {
+                    // Move overflow to next line
+                    val nextLine = currentLine + 1
+                    if (nextLine < NotebookPaperView.LINE_COUNT) {
+                        val nextEditText = editTexts[nextLine]
+                        val existingText = nextEditText?.text?.toString() ?: ""
+                        val newText = overflowText + existingText
+                        nextEditText?.setText(newText)
+                        nextEditText?.setSelection(overflowText.length)
+                        currentPage.addOrUpdateLine(nextLine, newText, overflowText.length)
+                        // Focus the next line
+                        post { setActiveLine(nextLine) }
+                    }
+                }
             }
         }
 
@@ -125,12 +134,14 @@ class NotebookEditor @JvmOverloads constructor(
         return editText
     }
 
-    // ── Line Management ──────────────────────────────────────
     fun setActiveLine(lineIndex: Int) {
         if (lineIndex < 0 || lineIndex >= NotebookPaperView.LINE_COUNT) return
+        if (isSettingActiveLine) return
+
+        isSettingActiveLine = true
 
         // Clear previous active
-        if (activeLineIndex >= 0) {
+        if (activeLineIndex >= 0 && activeLineIndex != lineIndex) {
             editTexts[activeLineIndex]?.clearFocus()
         }
 
@@ -143,8 +154,9 @@ class NotebookEditor @JvmOverloads constructor(
 
         // Show keyboard
         post {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+            isSettingActiveLine = false
         }
     }
 
@@ -170,7 +182,6 @@ class NotebookEditor @JvmOverloads constructor(
         paperView.selectedLineIndices = emptySet()
     }
 
-    // ── Content API ──────────────────────────────────────────
     fun getPage(): NotebookPage = currentPage
 
     fun loadPage(page: NotebookPage) {
@@ -190,7 +201,6 @@ class NotebookEditor @JvmOverloads constructor(
         }
     }
 
-    // ── Selection Actions ────────────────────────────────────
     fun deleteSelectedLines() {
         selectedLines.sortedDescending().forEach { index ->
             editTexts[index]?.setText("")

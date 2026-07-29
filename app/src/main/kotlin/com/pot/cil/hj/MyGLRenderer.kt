@@ -1,17 +1,24 @@
 package com.pot.cil.hj
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
-import android.opengl.Matrix
+import android.opengl.Matrix as GlMatrix
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
-import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.random.Random
 
 class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
@@ -39,7 +46,6 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private val contentMatrix = Matrix()
     private val mvpMatrix = FloatArray(16)
     private val projMatrix = FloatArray(16)
-    private val tempMatrix = FloatArray(16)
 
     // GL resources
     private var program = 0
@@ -67,7 +73,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // Native renderer handle
     private var nativeHandle = 0L
 
-    // Direct buffer for instance data (x, y, rotation, uvOffset, scale, alpha)
+    // Direct buffer for instance data (x, y, rot, uvX, uvY, alpha)
     private lateinit var instanceBuffer: FloatBuffer
     private val maxInstances = 4096
 
@@ -139,7 +145,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         nativeSetSelectedLine(nativeHandle, selectedLine)
 
         // Build projection matrix (ortho)
-        Matrix.orthoM(projMatrix, 0, 0f, width.toFloat(), height.toFloat(), 0f, -1f, 1f)
+        GlMatrix.orthoM(projMatrix, 0, 0f, width.toFloat(), height.toFloat(), 0f, -1f, 1f)
 
         // Reset transform
         contentMatrix.reset()
@@ -263,8 +269,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // ---- Draw vignette (screen space) ----
         // Save current MVP, set ortho for screen coords
         val savedMvp = mvpMatrix.clone()
-        Matrix.setIdentityM(mvpMatrix, 0)
-        Matrix.orthoM(mvpMatrix, 0, 0f, viewWidth.toFloat(), viewHeight.toFloat(), 0f, -1f, 1f)
+        GlMatrix.setIdentityM(mvpMatrix, 0)
+        GlMatrix.orthoM(mvpMatrix, 0, 0f, viewWidth.toFloat(), viewHeight.toFloat(), 0f, -1f, 1f)
         GLES30.glUniformMatrix4fv(uMvpLoc, 1, false, mvpMatrix, 0)
 
         GLES30.glUniform4f(uColorLoc, 0f, 0f, 0f, 0.12f)
@@ -288,7 +294,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private fun updateMvpMatrix() {
         val content = FloatArray(16)
-        Matrix.setIdentityM(content, 0)
+        GlMatrix.setIdentityM(content, 0)
         val values = FloatArray(9)
         contentMatrix.getValues(values)
         // Map android.graphics.Matrix to 4x4 column-major
@@ -298,7 +304,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         content[5] = values[4]
         content[12] = values[2]
         content[13] = values[5]
-        Matrix.multiplyMM(mvpMatrix, 0, projMatrix, 0, content, 0)
+        GlMatrix.multiplyMM(mvpMatrix, 0, projMatrix, 0, content, 0)
     }
 
     private fun contentMatrixToArray(): FloatArray {
@@ -456,7 +462,8 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 if (charIndex > 126) break
                 val x = col * charSize + charSize / 2f
                 val y = row * charSize + baseline
-                canvas.drawChar(charIndex.toChar(), x, y, paint)
+                // Use drawText for a single character
+                canvas.drawText(charIndex.toChar().toString(), x, y, paint)
                 charIndex++
             }
         }
@@ -484,7 +491,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val size = 256
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(size * size)
-        val rng = kotlin.random.Random(67890)
+        val rng = Random(67890)
         for (i in pixels.indices) {
             val base = 240 + rng.nextInt(16)
             val noise = rng.nextInt(8) - 4
@@ -495,7 +502,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val blurred = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val bc = Canvas(blurred)
         val blurPaint = Paint().apply {
-            maskFilter = BlurMaskFilter(2.5f, BlurMaskFilter.Blur.NORMAL)
+            maskFilter = android.graphics.BlurMaskFilter(2.5f, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
         bc.drawBitmap(bmp, 0f, 0f, blurPaint)
         bmp.recycle()
@@ -580,7 +587,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             vec2 finalPos = rotated + vec2(aInstanceX, aInstanceY);
             gl_Position = uMvp * vec4(finalPos, 0.0, 1.0);
             // UV: base + offset (character cell within atlas)
-            vec2 uv = aTexCoord * (1.0 / 16.0) + aInstanceUvOffset; // 16 columns
+            vec2 uv = aTexCoord * (1.0 / 16.0) + aInstanceUvOffset;
             vTexCoord = uv;
             vAlpha = aInstanceAlpha;
         }

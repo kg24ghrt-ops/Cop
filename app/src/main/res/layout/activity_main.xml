@@ -1,34 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<FrameLayout 
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background"
-    tools:context=".MainActivity">
+    android:background="#1A1A2E">
 
+    <!-- Pan/Zoom Container -->
+    <com.pot.cil.hj.ui.view.PanZoomLayout
+        android:id="@+id/panZoomLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Notebook Editor (Paper + Text) -->
+        <com.pot.cil.hj.ui.view.NotebookEditor
+            android:id="@+id/notebookEditor"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+    </com.pot.cil.hj.ui.view.PanZoomLayout>
+
+    <!-- Floating Toolbar -->
+    <com.pot.cil.hj.ui.view.ToolbarView
+        android:id="@+id/toolbar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="16dp" />
+
+    <!-- Zoom Level Indicator -->
     <TextView
-        android:id="@+id/textView"
+        android:id="@+id/tvZoomLevel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/app_name"
-        android:textAppearance="?attr/textAppearanceHeadlineMedium"
-        android:textColor="@color/on_background"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fab"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
-        android:contentDescription="@string/app_name_short"
-        android:src="@drawable/ic_add"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:tint="@color/on_primary" />
+        android:text="100%"
+        android:textColor="#80FFFFFF"
+        android:textSize="14sp" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- Hint for gestures -->
+    <TextView
+        android:id="@+id/tvHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="32dp"
+        android:text="Pinch to zoom • Double-tap to reset • Tap line to type"
+        android:textColor="#60FFFFFF"
+        android:textSize="12sp" />
+
+</FrameLayout>

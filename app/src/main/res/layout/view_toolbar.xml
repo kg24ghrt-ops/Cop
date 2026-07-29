@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="8dp"
+    android:background="@drawable/bg_toolbar">
+
+    <TextView
+        android:id="@+id/tvSelectionCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        android:textSize="14sp"
+        android:paddingHorizontal="12dp"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/btnZoomIn"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/btn_plus"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Zoom in" />
+
+    <ImageButton
+        android:id="@+id/btnZoomOut"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/btn_minus"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Zoom out" />
+
+    <ImageButton
+        android:id="@+id/btnResetZoom"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_revert"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Reset zoom" />
+
+    <View
+        android:layout_width="1dp"
+        android:layout_height="24dp"
+        android:layout_marginHorizontal="8dp"
+        android:background="@color/white" />
+
+    <ImageButton
+        android:id="@+id/btnSelectAll"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_agenda"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Select all" />
+
+    <ImageButton
+        android:id="@+id/btnClear"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="gone"
+        android:contentDescription="Clear selection" />
+
+    <ImageButton
+        android:id="@+id/btnDelete"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_delete"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="gone"
+        android:contentDescription="Delete selected" />
+
+</merge>

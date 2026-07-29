@@ -19,23 +19,20 @@ class NotebookPaperView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    // ── Configuration ─────────────────────────────────────────
     companion object {
-        const val LINE_SPACING = 90f           // Distance between horizontal lines
-        const val MARGIN_LEFT = 160f           // Red margin line position
+        const val LINE_SPACING = 90f
+        const val MARGIN_LEFT = 160f
         const val HOLE_RADIUS = 16f
-        const val HOLE_MARGIN_LEFT = 65f       // Holes from left edge
+        const val HOLE_MARGIN_LEFT = 65f
         const val HOLE_SPACING = 240f
-        const val TOP_PADDING = 60f            // Space before first line
+        const val TOP_PADDING = 60f
         const val BOTTOM_PADDING = 80f
-        const val LINE_COUNT = 80              // Total lines per page
+        const val LINE_COUNT = 80
     }
 
-    // Page dimensions in "paper units"
     val pageWidth = 850f
     val pageHeight get() = TOP_PADDING + (LINE_COUNT * LINE_SPACING) + BOTTOM_PADDING
 
-    // ── Paints ───────────────────────────────────────────────
     private val paperPaint = Paint().apply {
         color = NotebookColors.PaperBackground
         isAntiAlias = true
@@ -75,7 +72,6 @@ class NotebookPaperView @JvmOverloads constructor(
         alpha = 200
     }
 
-    // ── State ────────────────────────────────────────────────
     var activeLineIndex: Int = -1
         set(value) {
             field = value
@@ -88,7 +84,6 @@ class NotebookPaperView @JvmOverloads constructor(
             invalidate()
         }
 
-    // ── Drawing ──────────────────────────────────────────────
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val desiredHeight = (pageHeight * resources.displayMetrics.density).toInt()
         setMeasuredDimension(
@@ -99,31 +94,18 @@ class NotebookPaperView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-
         val width = width.toFloat()
         val height = height.toFloat()
 
-        // 1. Paper background with subtle shadow
         drawPaperBackground(canvas, width, height)
-
-        // 2. Highlight selected/active lines
         drawLineHighlights(canvas)
-
-        // 3. Horizontal ruled lines
         drawRuledLines(canvas, width)
-
-        // 4. Vertical red margin
         canvas.drawLine(MARGIN_LEFT, 0f, MARGIN_LEFT, height, marginPaint)
-
-        // 5. Notebook holes
         drawHoles(canvas)
     }
 
     private fun drawPaperBackground(canvas: Canvas, width: Float, height: Float) {
-        // Main paper
         canvas.drawRect(0f, 0f, width, height, paperPaint)
-        
-        // Subtle page shadow on right edge
         val shadowPaint = Paint().apply {
             shader = android.graphics.LinearGradient(
                 width - 20f, 0f, width, 0f,
@@ -168,15 +150,12 @@ class NotebookPaperView @JvmOverloads constructor(
     private fun drawHoles(canvas: Canvas) {
         var holeY = HOLE_SPACING
         while (holeY < height) {
-            // Shadow
             canvas.drawCircle(HOLE_MARGIN_LEFT + 2f, holeY + 2f, HOLE_RADIUS, holeShadowPaint)
-            // Hole
             canvas.drawCircle(HOLE_MARGIN_LEFT, holeY, HOLE_RADIUS, holePaint)
             holeY += HOLE_SPACING
         }
     }
 
-    // ── Public API ───────────────────────────────────────────
     fun getLineY(lineIndex: Int): Float {
         return TOP_PADDING + (lineIndex * LINE_SPACING) + (LINE_SPACING / 2)
     }
@@ -188,6 +167,6 @@ class NotebookPaperView @JvmOverloads constructor(
     }
 
     fun getTextBaseline(lineIndex: Int): Float {
-        return getLineY(lineIndex) + 8f  // Slight offset for text baseline
+        return getLineY(lineIndex) + 8f
     }
 }

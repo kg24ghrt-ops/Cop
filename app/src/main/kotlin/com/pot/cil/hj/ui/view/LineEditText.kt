@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.text.Editable
 import android.text.TextWatcher
+import android.text.TextPaint
 import android.util.AttributeSet
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
@@ -12,8 +13,8 @@ import androidx.appcompat.widget.AppCompatEditText
 import com.pot.cil.hj.ui.theme.NotebookColors
 
 /**
- * Custom EditText that sits on a single ruled line.
- * Handles line navigation, selection, text input, and auto-wrap overflow.
+ * Custom EditText that sits on a single ruled line with handwriting simulation.
+ * Renders text with baseline jitter, random spacing, and ink variation.
  */
 class LineEditText @JvmOverloads constructor(
     context: Context,
@@ -24,8 +25,8 @@ class LineEditText @JvmOverloads constructor(
     var lineIndex: Int = 0
     var onLineActionListener: OnLineActionListener? = null
 
-    /** Maximum characters before auto-wrapping to next line (approximate) */
     private var maxCharsPerLine: Int = 45
+    private val handwritingPaint = HandwritingPaint()
 
     interface OnLineActionListener {
         fun onNextLine(currentLine: Int)
@@ -33,7 +34,6 @@ class LineEditText @JvmOverloads constructor(
         fun onLineTextChanged(lineIndex: Int, text: String)
         fun onLineSelected(lineIndex: Int)
         fun onLineLongPressed(lineIndex: Int)
-        /** Called when text overflows this line - returns overflow text to put on next line */
         fun onLineOverflow(currentLine: Int, overflowText: String)
     }
 
@@ -44,25 +44,23 @@ class LineEditText @JvmOverloads constructor(
 
     private fun setupAppearance() {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        setTextColor(NotebookColors.InkBlack)
+        // Don't set text color here - we draw it ourselves
         textSize = 22f
         includeFontPadding = false
         setPadding(0, 0, 0, 0)
         imeOptions = EditorInfo.IME_ACTION_NEXT
         isSingleLine = true
+        // Use transparent color for default drawing so we can draw ourselves
+        setTextColor(android.graphics.Color.TRANSPARENT)
+        // But show cursor
+        setCursorVisible(true)
     }
 
     private fun setupListeners() {
-        // Text change with overflow detection
         addTextChangedListener(object : TextWatcher {
-            private var beforeText: String = ""
             private var isProcessingOverflow = false
 
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
-                if (!isProcessingOverflow) {
-                    beforeText = s?.toString() ?: ""
-                }
-            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
 
@@ -72,66 +70,50 @@ class LineEditText @JvmOverloads constructor(
                 val text = s?.toString() ?: ""
                 onLineActionListener?.onLineTextChanged(lineIndex, text)
 
-                // Check for overflow - if text is too long, split it
                 val overflow = checkOverflow(text)
                 if (overflow != null && overflow.isNotEmpty()) {
                     isProcessingOverflow = true
-                    // Keep only the part that fits on this line
                     val keepText = text.substring(0, text.length - overflow.length)
                     setText(keepText)
                     setSelection(keepText.length)
-                    // Send overflow to next line
                     onLineActionListener?.onLineOverflow(lineIndex, overflow)
                     isProcessingOverflow = false
                 }
             }
         })
 
-        // Focus change - ONLY notify, never trigger focus changes from here
         setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 onLineActionListener?.onLineSelected(lineIndex)
             }
+            invalidate() // Redraw with/without focus styling
         }
 
-        // Click to select
         setOnClickListener {
             onLineActionListener?.onLineSelected(lineIndex)
         }
 
-        // Long press for multi-select
         setOnLongClickListener {
             onLineActionListener?.onLineLongPressed(lineIndex)
             true
         }
     }
 
-    /**
-     * Check if text exceeds line capacity. Returns the overflow portion
-     * that should move to the next line, or null if no overflow.
-     */
     private fun checkOverflow(text: String): String? {
-        // Measure actual text width vs available width
         val paint = paint
         val availableWidth = width.toFloat() - compoundPaddingLeft - compoundPaddingRight
         if (availableWidth <= 0) {
-            // Fallback to character count if width not measured yet
-            return if (text.length > maxCharsPerLine) {
-                text.substring(maxCharsPerLine)
-            } else null
+            return if (text.length > maxCharsPerLine) text.substring(maxCharsPerLine) else null
         }
 
         val textWidth = paint.measureText(text)
         return if (textWidth > availableWidth) {
-            // Find how many characters fit
             var fitCount = text.length
             while (fitCount > 0 && paint.measureText(text, 0, fitCount) > availableWidth) {
                 fitCount--
             }
-            // Try to break at word boundary
             var breakPoint = fitCount
             if (breakPoint < text.length) {
-                // Look for last space before break point
                 val lastSpace = text.lastIndexOf(' ', breakPoint)
                 if (lastSpace > 0 && lastSpace > breakPoint - 15) {
                     breakPoint = lastSpace + 1
@@ -139,6 +121,75 @@ class LineEditText @JvmOverloads constructor(
             }
             text.substring(breakPoint)
         } else null
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        // Don't call super.onDraw() - we render text ourselves with handwriting effect
+        
+        val text = text?.toString() ?: ""
+        if (text.isEmpty()) {
+            // Draw cursor placeholder when empty
+            if (isFocused) {
+                val paint = Paint().apply {
+                    color = NotebookColors.LineBlue
+                    strokeWidth = 2f
+                    alpha = 100
+                }
+                canvas.drawLine(
+                    paddingLeft.toFloat(),
+                    baseline.toFloat() - 20,
+                    paddingLeft.toFloat(),
+                    baseline.toFloat() + 10,
+                    paint
+                )
+            }
+            return
+        }
+
+        // Create text paint with current styling
+        val textPaint = TextPaint(paint).apply {
+            color = NotebookColors.InkBlack
+            this.textSize = this@LineEditText.textSize
+            isAntiAlias = true
+        }
+
+        // Apply handwriting effects
+        val seed = lineIndex * 10000 + text.hashCode()
+        handwritingPaint.drawHandwrittenText(
+            canvas = canvas,
+            text = text,
+            x = paddingLeft.toFloat(),
+            y = baseline.toFloat(),
+            paint = textPaint,
+            seed = seed
+        )
+
+        // Draw cursor if focused
+        if (isFocused && selectionStart >= 0) {
+            drawCursor(canvas, text, selectionStart)
+        }
+    }
+
+    private fun drawCursor(canvas: Canvas, text: String, cursorPos: Int) {
+        val cursorX = if (cursorPos <= text.length) {
+            paint.measureText(text, 0, cursorPos) + paddingLeft
+        } else {
+            paint.measureText(text) + paddingLeft
+        }
+
+        val cursorPaint = Paint().apply {
+            color = NotebookColors.InkBlue
+            strokeWidth = 2.5f
+            alpha = 200
+        }
+
+        canvas.drawLine(
+            cursorX,
+            baseline - textSize * 0.8f,
+            cursorX,
+            baseline + textSize * 0.2f,
+            cursorPaint
+        )
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -164,20 +215,6 @@ class LineEditText @JvmOverloads constructor(
             onLineActionListener?.onNextLine(lineIndex)
         } else {
             super.onEditorAction(actionCode)
-        }
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (isFocused && text?.isEmpty() == true) {
-            val paint = Paint().apply {
-                color = NotebookColors.LineBlue
-                strokeWidth = 2f
-                alpha = 100
-            }
-            val x = paddingLeft.toFloat()
-            val baseline = baseline.toFloat()
-            canvas.drawLine(x, baseline - 20, x, baseline + 10, paint)
         }
     }
 }

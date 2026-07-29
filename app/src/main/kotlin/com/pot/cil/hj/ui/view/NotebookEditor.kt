@@ -10,7 +10,6 @@ import com.pot.cil.hj.data.NotebookPage
 
 /**
  * The main editor composes the paper background with editable text lines.
- * Manages line creation, focus, selection, auto-wrap, and coordinates with PanZoomLayout.
  */
 class NotebookEditor @JvmOverloads constructor(
     context: Context,
@@ -28,8 +27,6 @@ class NotebookEditor @JvmOverloads constructor(
     private var activeLineIndex: Int = -1
     private var selectedLines = mutableSetOf<Int>()
     private var isMultiSelectMode = false
-
-    // Guard against reentrant focus operations
     private var isSettingActiveLine = false
 
     var onPageChanged: ((NotebookPage) -> Unit)? = null
@@ -113,7 +110,6 @@ class NotebookEditor @JvmOverloads constructor(
                 }
 
                 override fun onLineOverflow(currentLine: Int, overflowText: String) {
-                    // Move overflow to next line
                     val nextLine = currentLine + 1
                     if (nextLine < NotebookPaperView.LINE_COUNT) {
                         val nextEditText = editTexts[nextLine]
@@ -122,7 +118,6 @@ class NotebookEditor @JvmOverloads constructor(
                         nextEditText?.setText(newText)
                         nextEditText?.setSelection(overflowText.length)
                         currentPage.addOrUpdateLine(nextLine, newText, overflowText.length)
-                        // Focus the next line
                         post { setActiveLine(nextLine) }
                     }
                 }
@@ -140,7 +135,6 @@ class NotebookEditor @JvmOverloads constructor(
 
         isSettingActiveLine = true
 
-        // Clear previous active
         if (activeLineIndex >= 0 && activeLineIndex != lineIndex) {
             editTexts[activeLineIndex]?.clearFocus()
         }
@@ -152,7 +146,6 @@ class NotebookEditor @JvmOverloads constructor(
         editText?.requestFocus()
         editText?.setSelection(editText.text?.length ?: 0)
 
-        // Show keyboard
         post {
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)

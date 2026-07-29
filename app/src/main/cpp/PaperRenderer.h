@@ -25,6 +25,7 @@ public:
     void resetTransform();
     void drawFrame();
 
+    // Returns true on success
     bool createFontAtlas(int width, int height, const uint8_t* pixels);
 
 private:
@@ -35,16 +36,16 @@ private:
     GLuint mVignetteVbo = 0;
     GLuint mFontTexture = 0, mGrainTexture = 0;
 
-    // Uniform locations
+    // Uniforms
     GLint uMvp = -1, uColor = -1, uTexture = -1, uAlpha = -1;
     GLint uResolution = -1, uVignetteRadius = -1, uCharSize = -1;
 
-    // Attribute locations
+    // Attributes
     GLint aPos = -1, aTexCoord = -1;
     GLint aInstanceX = -1, aInstanceY = -1, aInstanceRot = -1;
     GLint aInstanceUvOffset = -1, aInstanceAlpha = -1;
 
-    // Paper dimensions
+    // Paper params
     int mWidth = 0, mHeight = 0;
     float mTopMargin = 0, mSpacing = 0;
     float mLeftMargin = 0, mBottomMargin = 0;
@@ -60,6 +61,9 @@ private:
         1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
     };
     float mMvpMatrix[16];
+
+    // Flags
+    bool mFontAtlasCreated = false;
 
     // Helpers
     bool compileShaders();

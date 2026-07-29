@@ -19,6 +19,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var cachedLineSpacing = 30f
     private var cachedTopMargin = 40f
     private var cachedLeftMargin = 40f
+    private var fontAtlasCreated = false
 
     // ---- JNI methods ----
     private external fun nativeCreateRenderer(): Long
@@ -38,10 +39,11 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     init {
         System.loadLibrary("native_renderer")
         nativeHandle = nativeCreateRenderer()
-        createAndUploadFontAtlas()
+        // Font atlas is created later in onSurfaceCreated (GL context ready)
     }
 
     private fun createAndUploadFontAtlas() {
+        if (fontAtlasCreated) return
         val charSize = 48
         val cols = 16
         val rows = 6
@@ -75,10 +77,12 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         bitmap.copyPixelsToBuffer(buffer)
         nativeCreateFontAtlas(nativeHandle, atlasWidth, atlasHeight, buffer.array())
         bitmap.recycle()
+        fontAtlasCreated = true
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        // Native renderer handles initialization
+        // GL context is ready – create the font atlas now
+        createAndUploadFontAtlas()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -110,7 +114,7 @@ class MyGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         nativeDrawFrame(nativeHandle)
     }
 
-    // ---- Public API (identical to original) ----
+    // ---- Public API (unchanged) ----
     fun setTextOnLine(lineNumber: Int, text: String) {
         nativeSetTextLine(nativeHandle, lineNumber, text)
     }

@@ -25,6 +25,10 @@
     ".h": {
       "enabled": false,
       "run": "clangd"
+    },
+    ".xml": {
+      "enabled": false,
+      "run": "lemminx"
     }
   }
 }

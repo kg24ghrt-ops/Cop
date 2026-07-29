@@ -1,18 +1,18 @@
 package com.pot.cil.hj
 
 import android.content.Context
-import android.opengl.GLSurfaceView
+import android.graphics.Canvas
 import android.util.AttributeSet
 import android.view.*
 import android.view.inputmethod.InputMethodManager
 
-class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
+class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
-    private val renderer = MyGLRenderer(context)
+    private val renderer = NotebookRenderer(context)
     private var fakeEditText: FakeEditText? = null
     private var currentLine = 3
 
-    // Gesture state
+    // Gestures
     private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
     private var lastPanX = 0f
     private var lastPanY = 0f
@@ -21,33 +21,28 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     init {
         isFocusableInTouchMode = true
         isFocusable = true
-
-        // Request OpenGL ES 3.0
-        setEGLContextClientVersion(3)
-        // Choose a config that works on all devices
-        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-        setRenderer(renderer)
-        renderMode = RENDERMODE_WHEN_DIRTY
+        // Enable hardware acceleration – already on by default, but ensure it
+        setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
-    // ---- Public API (Identical to original) ----
-
+    // ---- Public API (matches the original MyGLSurfaceView) ----
     fun setFakeEditText(editText: FakeEditText) {
         fakeEditText = editText
         editText.setOnTextChangeListener { newText ->
-            updateRenderedText(newText)
+            renderer.setTextOnLine(currentLine, newText)
+            invalidate()
         }
     }
 
     fun updateRenderedText(text: String) {
         renderer.setTextOnLine(currentLine, text)
-        requestRender()
+        invalidate()
     }
 
     fun clearRenderedText() {
         renderer.clearAllText()
         fakeEditText?.clearText()
-        requestRender()
+        invalidate()
     }
 
     fun moveToLine(lineNumber: Int) {
@@ -62,7 +57,7 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
                 it.setSelection(lineText.length)
             }
         }
-        requestRender()
+        invalidate()
     }
 
     fun moveLineUp() = moveToLine(currentLine - 1)
@@ -70,6 +65,7 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
     fun getCurrentLine(): Int = currentLine
     fun getTotalLines(): Int = renderer.getTotalLines()
 
+    // ---- Touch Handling ----
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
 
@@ -87,13 +83,15 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
                     renderer.setPan(dx, dy)
                     lastPanX = event.x
                     lastPanY = event.y
-                    requestRender()
+                    invalidate()
                 }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isPanning = false
-                if (Math.abs(event.x - lastPanX) < 20 && Math.abs(event.y - lastPanY) < 20) {
+                // Tap to move cursor
+                if (kotlin.math.abs(event.x - lastPanX) < 20 &&
+                    kotlin.math.abs(event.y - lastPanY) < 20) {
                     val y = event.y - renderer.getTopMarginPixels()
                     val line = (y / renderer.getLineHeightPixels()).toInt()
                     if (line in 0 until renderer.getTotalLines()) {
@@ -131,15 +129,24 @@ class MyGLSurfaceView(context: Context, attrs: AttributeSet? = null) : GLSurface
         }
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        renderer.cleanup()
+    fun onResume() { /* No-op, but keep for compatibility */ }
+    fun onPause() { /* No-op, but keep for compatibility */ }
+
+    // ---- Rendering ----
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        renderer.onSizeChanged(w, h)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        renderer.draw(canvas, width, height)
     }
 
     private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             renderer.setZoom(detector.scaleFactor, detector.focusX, detector.focusY)
-            requestRender()
+            invalidate()
             return true
         }
     }

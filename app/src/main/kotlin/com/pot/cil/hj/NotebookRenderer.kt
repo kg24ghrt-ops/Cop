@@ -2,8 +2,6 @@ package com.pot.cil.hj
 
 import android.content.Context
 import android.graphics.*
-import android.os.Build
-import androidx.annotation.RequiresApi
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -35,12 +33,9 @@ class NotebookRenderer(private val context: Context) {
     private val transformMatrix = Matrix()
     private val inverseMatrix = Matrix()
 
-    // ---- RenderNode caching ----
+    // ---- RenderNode caching (Android 11+ / API 30+) ----
     private val staticRenderNode = RenderNode("NotebookStatic")
     private val dynamicRenderNode = RenderNode("NotebookDynamic")
-
-    // ---- Shaders & Effects ----
-    private lateinit var grainShader: RuntimeShader
 
     // ---- Paints ----
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -66,36 +61,14 @@ class NotebookRenderer(private val context: Context) {
     private var viewWidth = 0
     private var viewHeight = 0
 
-    // ---- Flags to know if nodes have been recorded ----
+    // ---- Flags to track if nodes have been recorded ----
     private var staticNodeReady = false
     private var dynamicNodeReady = false
 
     init {
-        initShader()
-    }
-
-    // ---- AGSL Shader Source (Paper Grain) ----
-    private val GRAIN_SHADER_SOURCE = """
-        uniform float2 uResolution;
-        uniform float uTime;
-        uniform float uIntensity;
-
-        half4 main(vec2 fragCoord) {
-            vec2 uv = fragCoord / uResolution;
-            // Simple noise for paper grain
-            float grain = 0.0;
-            for (int i = 0; i < 3; i++) {
-                vec2 p = uv * (10.0 + float(i) * 5.0) + uTime * 0.01;
-                grain += fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
-            }
-            grain *= uIntensity;
-            half3 color = half3(0.98, 0.96, 0.90) + grain * 0.02;
-            return half4(color, 1.0);
-        }
-    """.trimIndent()
-
-    private fun initShader() {
-        grainShader = RuntimeShader(GRAIN_SHADER_SOURCE)
+        // Set initial position; will be updated in onSizeChanged
+        staticRenderNode.setPosition(0, 0, 1, 1)
+        dynamicRenderNode.setPosition(0, 0, 1, 1)
     }
 
     // ---- Public API ----
@@ -156,33 +129,84 @@ class NotebookRenderer(private val context: Context) {
     fun onSizeChanged(width: Int, height: Int) {
         viewWidth = width
         viewHeight = height
+
+        // Update RenderNode positions
+        staticRenderNode.setPosition(0, 0, width, height)
+        dynamicRenderNode.setPosition(0, 0, width, height)
+
         recalcPaperParams()
         rebuildStaticNode()
         rebuildDynamicNode()
-        // Update shader uniforms
-        grainShader.setFloatUniform("uResolution", width.toFloat(), height.toFloat())
     }
 
     // ---- Drawing ----
     fun draw(canvas: Canvas, width: Int, height: Int) {
-        // Apply the current transform to the canvas
+        // Only draw if hardware accelerated (RenderNode requires it)
+        if (!canvas.isHardwareAccelerated) {
+            // Fallback: draw directly (simplified)
+            drawFallback(canvas)
+            return
+        }
+
         canvas.save()
         canvas.concat(transformMatrix)
 
-        // Draw the static RenderNode (paper background, grain, lines, margin)
-        if (staticNodeReady) {
-            staticRenderNode.drawInto(canvas)
+        // Draw static RenderNode (background, grain, lines, margin)
+        if (staticNodeReady && staticRenderNode.hasDisplayList()) {
+            canvas.drawRenderNode(staticRenderNode)
         }
 
-        // Draw the dynamic RenderNode (highlight, text)
-        if (dynamicNodeReady) {
-            dynamicRenderNode.drawInto(canvas)
+        // Draw dynamic RenderNode (highlight, text)
+        if (dynamicNodeReady && dynamicRenderNode.hasDisplayList()) {
+            canvas.drawRenderNode(dynamicRenderNode)
         }
 
         canvas.restore()
 
-        // ---- Vignette (screen space, no transform) ----
+        // Vignette (screen space, no transform)
         drawVignette(canvas, width, height)
+    }
+
+    // ---- Fallback for non-accelerated canvases ----
+    private fun drawFallback(canvas: Canvas) {
+        // Paper background
+        canvas.drawColor(Color.rgb(250, 245, 230))
+
+        // Ruled lines
+        for (i in 0 until totalLinesValue) {
+            val y = topMarginPx + i * lineSpacingPx + lineSpacingPx / 2f
+            canvas.drawLine(leftMarginPx, y, viewWidth.toFloat(), y, linePaint)
+        }
+
+        // Margin
+        canvas.drawLine(
+            leftMarginPx,
+            topMarginPx,
+            leftMarginPx,
+            viewHeight - bottomMarginPx,
+            marginPaint
+        )
+
+        // Highlight
+        if (selectedLine in 0 until totalLinesValue) {
+            val y = topMarginPx + selectedLine * lineSpacingPx
+            canvas.drawRect(
+                leftMarginPx,
+                y,
+                viewWidth.toFloat(),
+                y + lineSpacingPx,
+                highlightPaint
+            )
+        }
+
+        // Text (simplified, without jitter)
+        for ((line, text) in textPerLine) {
+            if (line !in 0 until totalLinesValue) continue
+            val y = topMarginPx + line * lineSpacingPx + lineSpacingPx / 2f
+            val fm = textPaint.fontMetrics
+            val baseline = y - (fm.ascent + fm.descent) / 2f
+            canvas.drawText(text, leftMarginPx + 10f, baseline, textPaint)
+        }
     }
 
     // ---- Private helpers ----
@@ -203,7 +227,6 @@ class NotebookRenderer(private val context: Context) {
 
         textPaint.textSize = lineSpacingPx * 0.5f
 
-        // Clamp selection and remove out-of-bounds text
         selectedLine = selectedLine.coerceIn(0, totalLinesValue - 1)
         textPerLine.keys.removeAll { it !in 0 until totalLinesValue }
     }
@@ -211,24 +234,16 @@ class NotebookRenderer(private val context: Context) {
     private fun rebuildStaticNode() {
         val canvas = staticRenderNode.beginRecording(viewWidth, viewHeight)
         try {
-            // ---- Paper background color ----
+            // Paper background
             canvas.drawColor(Color.rgb(250, 245, 230))
 
-            // ---- Paper grain (via RuntimeShader on a Paint) ----
-            grainShader.setFloatUniform("uTime", System.currentTimeMillis() % 10000 / 10000f)
-            grainShader.setFloatUniform("uIntensity", 1.0f)
-            val grainPaint = Paint().apply {
-                shader = grainShader
-            }
-            canvas.drawRect(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat(), grainPaint)
-
-            // ---- Ruled lines ----
+            // Ruled lines
             for (i in 0 until totalLinesValue) {
                 val y = topMarginPx + i * lineSpacingPx + lineSpacingPx / 2f
                 canvas.drawLine(leftMarginPx, y, viewWidth.toFloat(), y, linePaint)
             }
 
-            // ---- Red margin ----
+            // Red margin
             canvas.drawLine(
                 leftMarginPx,
                 topMarginPx,
@@ -246,10 +261,10 @@ class NotebookRenderer(private val context: Context) {
     private fun rebuildDynamicNode() {
         val canvas = dynamicRenderNode.beginRecording(viewWidth, viewHeight)
         try {
-            // Clear (transparent background)
+            // Clear to transparent
             canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
 
-            // ---- Selected line highlight ----
+            // Selected line highlight
             if (selectedLine in 0 until totalLinesValue) {
                 val y = topMarginPx + selectedLine * lineSpacingPx
                 canvas.drawRect(
@@ -261,7 +276,7 @@ class NotebookRenderer(private val context: Context) {
                 )
             }
 
-            // ---- Text (with humanization) ----
+            // Text with humanization
             for ((line, text) in textPerLine) {
                 if (line !in 0 until totalLinesValue) continue
                 drawHumanizedText(canvas, text, line)
@@ -291,7 +306,7 @@ class NotebookRenderer(private val context: Context) {
             val charWidth = textPaint.measureText(charStr)
 
             val maxJitterY = lineSpacingPx * 0.15f
-            val jitterY = (rng.nextFloat() * 2f - 1f) * maxJitterY * 0.6f // humanize factor 0.6
+            val jitterY = (rng.nextFloat() * 2f - 1f) * maxJitterY * 0.6f
 
             val maxRotation = 2f
             val rotation = (rng.nextFloat() * 2f - 1f) * maxRotation * 0.6f
@@ -329,10 +344,10 @@ class NotebookRenderer(private val context: Context) {
     }
 
     private fun clampPan() {
-        // Simple clamping – can be improved later
+        // Simple clamping – can be improved
         val values = FloatArray(9)
         transformMatrix.getValues(values)
-        // For now, we just keep the translation within reasonable bounds
-        // More advanced clamping will be added later.
+        // Basic clamp to keep content visible
+        // More sophisticated clamping can be added later
     }
 }

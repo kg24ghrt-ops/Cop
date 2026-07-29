@@ -27,4 +27,7 @@
 
     <!-- Icon Colors -->
     <color name="ic_launcher_background">#6750A4</color>
+
+    <!-- Notebook specific -->
+    <color name="notebook_white">#FFFFFFFF</color>
 </resources>

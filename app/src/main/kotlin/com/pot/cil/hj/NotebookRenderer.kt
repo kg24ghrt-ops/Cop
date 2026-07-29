@@ -2,13 +2,18 @@ package com.pot.cil.hj
 
 import android.content.Context
 import android.graphics.*
+import android.util.Log
 import kotlin.math.min
 import kotlin.random.Random
 
 class NotebookRenderer(private val context: Context) {
 
-    // ---- Paper specs ----
-    private val LINE_SPACING_MM = 7.1f
+    companion object {
+        private const val TAG = "NotebookRenderer"
+    }
+
+    // ---- Paper specs (in millimeters) ----
+    private val LINE_SPACING_MM = 7.1f      // Standard ruled notebook paper spacing[reference:2]
     private val TOP_MARGIN_MM = 32f
     private val LEFT_MARGIN_MM = 32f
     private val BOTTOM_MARGIN_MM = 12.7f
@@ -39,15 +44,18 @@ class NotebookRenderer(private val context: Context) {
 
     // ---- Paints ----
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(140, 153, 191)
-        strokeWidth = 1.5f
+        color = Color.rgb(140, 153, 191)  // Soft blue
+        strokeWidth = 2f
+        style = Paint.Style.STROKE
     }
     private val marginPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(191, 51, 51)
-        strokeWidth = 2f
+        color = Color.rgb(191, 51, 51)    // Red
+        strokeWidth = 3f
+        style = Paint.Style.STROKE
     }
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(77, 102, 153, 255)
+        style = Paint.Style.FILL
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
@@ -66,7 +74,6 @@ class NotebookRenderer(private val context: Context) {
     private var dynamicNodeReady = false
 
     init {
-        // Set initial position; will be updated in onSizeChanged
         staticRenderNode.setPosition(0, 0, 1, 1)
         dynamicRenderNode.setPosition(0, 0, 1, 1)
     }
@@ -130,6 +137,8 @@ class NotebookRenderer(private val context: Context) {
         viewWidth = width
         viewHeight = height
 
+        Log.d(TAG, "onSizeChanged: width=$width, height=$height")
+
         // Update RenderNode positions
         staticRenderNode.setPosition(0, 0, width, height)
         dynamicRenderNode.setPosition(0, 0, width, height)
@@ -141,9 +150,9 @@ class NotebookRenderer(private val context: Context) {
 
     // ---- Drawing ----
     fun draw(canvas: Canvas, width: Int, height: Int) {
-        // Only draw if hardware accelerated (RenderNode requires it)
+        // If not hardware accelerated, use fallback
         if (!canvas.isHardwareAccelerated) {
-            // Fallback: draw directly (simplified)
+            Log.w(TAG, "Canvas not hardware accelerated - using fallback")
             drawFallback(canvas)
             return
         }
@@ -151,9 +160,15 @@ class NotebookRenderer(private val context: Context) {
         canvas.save()
         canvas.concat(transformMatrix)
 
-        // Draw static RenderNode (background, grain, lines, margin)
+        // Draw static RenderNode (background, lines, margin)
         if (staticNodeReady && staticRenderNode.hasDisplayList()) {
             canvas.drawRenderNode(staticRenderNode)
+        } else {
+            Log.w(TAG, "Static node not ready - redrawing")
+            rebuildStaticNode()
+            if (staticNodeReady && staticRenderNode.hasDisplayList()) {
+                canvas.drawRenderNode(staticRenderNode)
+            }
         }
 
         // Draw dynamic RenderNode (highlight, text)
@@ -171,6 +186,8 @@ class NotebookRenderer(private val context: Context) {
     private fun drawFallback(canvas: Canvas) {
         // Paper background
         canvas.drawColor(Color.rgb(250, 245, 230))
+
+        Log.d(TAG, "Fallback: drawing $totalLinesValue lines")
 
         // Ruled lines
         for (i in 0 until totalLinesValue) {
@@ -215,35 +232,78 @@ class NotebookRenderer(private val context: Context) {
         val dpi = context.resources.displayMetrics.densityDpi.toFloat()
         val pxPerMm = dpi / 25.4f
 
+        Log.d(TAG, "recalcPaperParams: dpi=$dpi, pxPerMm=$pxPerMm")
+
+        // Calculate line spacing - use the smaller of the two values
         val calcSpacing = LINE_SPACING_MM * pxPerMm
-        val viewBasedSpacing = (viewHeight - (TOP_MARGIN_MM + BOTTOM_MARGIN_MM) * pxPerMm) / TOTAL_LINES
-        lineSpacingPx = min(calcSpacing, viewBasedSpacing)
+        val viewBasedSpacing = if (TOTAL_LINES > 0) {
+            (viewHeight - (TOP_MARGIN_MM + BOTTOM_MARGIN_MM) * pxPerMm) / TOTAL_LINES
+        } else {
+            calcSpacing
+        }
+
+        lineSpacingPx = if (calcSpacing > 0 && viewBasedSpacing > 0) {
+            min(calcSpacing, viewBasedSpacing)
+        } else if (calcSpacing > 0) {
+            calcSpacing
+        } else {
+            30f // fallback
+        }
+
         topMarginPx = TOP_MARGIN_MM * pxPerMm
         leftMarginPx = (LEFT_MARGIN_MM * pxPerMm).coerceAtMost(viewWidth * 0.3f)
         bottomMarginPx = BOTTOM_MARGIN_MM * pxPerMm
 
+        // Ensure we have valid margins
+        if (topMarginPx <= 0) topMarginPx = 40f
+        if (leftMarginPx <= 0) leftMarginPx = 40f
+        if (bottomMarginPx <= 0) bottomMarginPx = 16f
+
         val availableHeight = viewHeight - topMarginPx - bottomMarginPx
-        totalLinesValue = (availableHeight / lineSpacingPx).toInt().coerceAtMost(TOTAL_LINES)
+        totalLinesValue = if (lineSpacingPx > 0) {
+            (availableHeight / lineSpacingPx).toInt().coerceIn(1, TOTAL_LINES)
+        } else {
+            TOTAL_LINES
+        }
 
         textPaint.textSize = lineSpacingPx * 0.5f
 
+        // Clamp selection
         selectedLine = selectedLine.coerceIn(0, totalLinesValue - 1)
         textPerLine.keys.removeAll { it !in 0 until totalLinesValue }
+
+        Log.d(TAG, "recalcPaperParams: lineSpacingPx=$lineSpacingPx, " +
+                "topMarginPx=$topMarginPx, leftMarginPx=$leftMarginPx, " +
+                "bottomMarginPx=$bottomMarginPx, totalLines=$totalLinesValue")
     }
 
     private fun rebuildStaticNode() {
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            Log.w(TAG, "rebuildStaticNode: invalid dimensions")
+            return
+        }
+
+        Log.d(TAG, "rebuildStaticNode: recording ${viewWidth}x${viewHeight}, lines=$totalLinesValue")
+
         val canvas = staticRenderNode.beginRecording(viewWidth, viewHeight)
         try {
-            // Paper background
+            // ---- Paper background color ----
             canvas.drawColor(Color.rgb(250, 245, 230))
 
-            // Ruled lines
+            // ---- TEST: Draw a red rectangle to confirm rendering works ----
+            val testPaint = Paint().apply {
+                color = Color.RED
+                style = Paint.Style.FILL
+            }
+            canvas.drawRect(50f, 50f, 150f, 150f, testPaint)
+
+            // ---- Ruled lines (blue) ----
             for (i in 0 until totalLinesValue) {
                 val y = topMarginPx + i * lineSpacingPx + lineSpacingPx / 2f
                 canvas.drawLine(leftMarginPx, y, viewWidth.toFloat(), y, linePaint)
             }
 
-            // Red margin
+            // ---- Red margin ----
             canvas.drawLine(
                 leftMarginPx,
                 topMarginPx,
@@ -253,18 +313,27 @@ class NotebookRenderer(private val context: Context) {
             )
 
             staticNodeReady = true
+            Log.d(TAG, "rebuildStaticNode: completed successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "rebuildStaticNode error", e)
+            staticNodeReady = false
         } finally {
             staticRenderNode.endRecording()
         }
     }
 
     private fun rebuildDynamicNode() {
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            Log.w(TAG, "rebuildDynamicNode: invalid dimensions")
+            return
+        }
+
         val canvas = dynamicRenderNode.beginRecording(viewWidth, viewHeight)
         try {
             // Clear to transparent
             canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
 
-            // Selected line highlight
+            // ---- Selected line highlight ----
             if (selectedLine in 0 until totalLinesValue) {
                 val y = topMarginPx + selectedLine * lineSpacingPx
                 canvas.drawRect(
@@ -276,13 +345,16 @@ class NotebookRenderer(private val context: Context) {
                 )
             }
 
-            // Text with humanization
+            // ---- Text with humanization ----
             for ((line, text) in textPerLine) {
                 if (line !in 0 until totalLinesValue) continue
                 drawHumanizedText(canvas, text, line)
             }
 
             dynamicNodeReady = true
+        } catch (e: Exception) {
+            Log.e(TAG, "rebuildDynamicNode error", e)
+            dynamicNodeReady = false
         } finally {
             dynamicRenderNode.endRecording()
         }
@@ -344,10 +416,17 @@ class NotebookRenderer(private val context: Context) {
     }
 
     private fun clampPan() {
-        // Simple clamping – can be improved
         val values = FloatArray(9)
         transformMatrix.getValues(values)
         // Basic clamp to keep content visible
-        // More sophisticated clamping can be added later
+        val tx = values[2]
+        val ty = values[5]
+        val scale = values[0]
+        val maxTx = viewWidth * 0.5f
+        val maxTy = viewHeight * 0.5f
+        if (tx > maxTx) transformMatrix.postTranslate(-(tx - maxTx), 0f)
+        if (tx < -maxTx) transformMatrix.postTranslate(-(tx + maxTx), 0f)
+        if (ty > maxTy) transformMatrix.postTranslate(0f, -(ty - maxTy))
+        if (ty < -maxTy) transformMatrix.postTranslate(0f, -(ty + maxTy))
     }
 }

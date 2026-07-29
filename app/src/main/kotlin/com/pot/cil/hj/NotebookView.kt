@@ -3,16 +3,20 @@ package com.pot.cil.hj
 import android.content.Context
 import android.graphics.Canvas
 import android.util.AttributeSet
+import android.util.Log
 import android.view.*
 import android.view.inputmethod.InputMethodManager
 
 class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
+    companion object {
+        private const val TAG = "NotebookView"
+    }
+
     private val renderer = NotebookRenderer(context)
     private var fakeEditText: FakeEditText? = null
     private var currentLine = 3
 
-    // Gestures
     private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
     private var lastPanX = 0f
     private var lastPanY = 0f
@@ -21,11 +25,9 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
     init {
         isFocusableInTouchMode = true
         isFocusable = true
-        // Enable hardware acceleration – already on by default, but ensure it
-        setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
-    // ---- Public API (matches the original MyGLSurfaceView) ----
+    // ---- Public API ----
     fun setFakeEditText(editText: FakeEditText) {
         fakeEditText = editText
         editText.setOnTextChangeListener { newText ->
@@ -46,6 +48,7 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
     }
 
     fun moveToLine(lineNumber: Int) {
+        Log.d(TAG, "moveToLine: $lineNumber")
         val target = lineNumber.coerceIn(0, renderer.getTotalLines() - 1)
         if (target == currentLine) return
         currentLine = target
@@ -58,6 +61,7 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
             }
         }
         invalidate()
+        Log.d(TAG, "moveToLine: currentLine=$currentLine")
     }
 
     fun moveLineUp() = moveToLine(currentLine - 1)
@@ -90,12 +94,17 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isPanning = false
                 // Tap to move cursor
-                if (kotlin.math.abs(event.x - lastPanX) < 20 &&
-                    kotlin.math.abs(event.y - lastPanY) < 20) {
+                val dx = event.x - lastPanX
+                val dy = event.y - lastPanY
+                if (kotlin.math.abs(dx) < 20 && kotlin.math.abs(dy) < 20) {
+                    Log.d(TAG, "Tap detected at (${event.x}, ${event.y})")
                     val y = event.y - renderer.getTopMarginPixels()
                     val line = (y / renderer.getLineHeightPixels()).toInt()
+                    Log.d(TAG, "Computed line: $line")
                     if (line in 0 until renderer.getTotalLines()) {
                         moveToLine(line)
+                    } else {
+                        Log.w(TAG, "Line $line out of bounds")
                     }
                     showKeyboard()
                 }
@@ -115,10 +124,17 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
 
     fun showKeyboard() {
         fakeEditText?.let {
-            it.requestFocus()
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT)
-        }
+            Log.d(TAG, "showKeyboard: requesting focus")
+            val focused = it.requestFocus()
+            Log.d(TAG, "requestFocus returned $focused")
+            if (focused) {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT)
+                Log.d(TAG, "Keyboard shown")
+            } else {
+                Log.w(TAG, "requestFocus failed")
+            }
+        } ?: Log.w(TAG, "fakeEditText is null")
     }
 
     fun hideKeyboard() {
@@ -129,17 +145,18 @@ class NotebookView(context: Context, attrs: AttributeSet? = null) : View(context
         }
     }
 
-    fun onResume() { /* No-op, but keep for compatibility */ }
-    fun onPause() { /* No-op, but keep for compatibility */ }
+    fun onResume() { /* no-op */ }
+    fun onPause() { /* no-op */ }
 
-    // ---- Rendering ----
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         renderer.onSizeChanged(w, h)
+        Log.d(TAG, "onSizeChanged: w=$w, h=$h")
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        Log.d(TAG, "onDraw called")
         renderer.draw(canvas, width, height)
     }
 

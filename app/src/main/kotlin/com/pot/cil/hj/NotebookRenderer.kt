@@ -3,7 +3,6 @@ package com.pot.cil.hj
 import android.content.Context
 import android.graphics.*
 import android.os.Build
-import android.renderscript.* // Not used, but kept for reference
 import androidx.annotation.RequiresApi
 import kotlin.math.min
 import kotlin.random.Random
@@ -42,7 +41,6 @@ class NotebookRenderer(private val context: Context) {
 
     // ---- Shaders & Effects ----
     private lateinit var grainShader: RuntimeShader
-    private lateinit var vignetteEffect: RenderEffect
 
     // ---- Paints ----
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -61,9 +59,6 @@ class NotebookRenderer(private val context: Context) {
         textAlign = Paint.Align.LEFT
         isSubpixelText = true
     }
-    private val grainPaint = Paint().apply {
-        // Alpha applied via blend mode
-    }
 
     // ---- Random seeds for text jitter ----
     private val lineRngSeeds = mutableMapOf<Int, Long>()
@@ -71,12 +66,15 @@ class NotebookRenderer(private val context: Context) {
     private var viewWidth = 0
     private var viewHeight = 0
 
+    // ---- Flags to know if nodes have been recorded ----
+    private var staticNodeReady = false
+    private var dynamicNodeReady = false
+
     init {
-        initShaders()
-        initEffects()
+        initShader()
     }
 
-    // ---- AGSL Shader Source ----
+    // ---- AGSL Shader Source (Paper Grain) ----
     private val GRAIN_SHADER_SOURCE = """
         uniform float2 uResolution;
         uniform float uTime;
@@ -84,30 +82,20 @@ class NotebookRenderer(private val context: Context) {
 
         half4 main(vec2 fragCoord) {
             vec2 uv = fragCoord / uResolution;
-            // Simplex-like noise (simplified) for paper grain
+            // Simple noise for paper grain
             float grain = 0.0;
             for (int i = 0; i < 3; i++) {
                 vec2 p = uv * (10.0 + float(i) * 5.0) + uTime * 0.01;
                 grain += fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
             }
             grain *= uIntensity;
-            // Map to subtle brightness variation
             half3 color = half3(0.98, 0.96, 0.90) + grain * 0.02;
             return half4(color, 1.0);
         }
     """.trimIndent()
 
-    private fun initShaders() {
+    private fun initShader() {
         grainShader = RuntimeShader(GRAIN_SHADER_SOURCE)
-    }
-
-    private fun initEffects() {
-        // Vignette using a RadialGradient shader via RenderEffect
-        // We'll apply it as a chain to the view's RenderNode.
-        // However, we can also draw vignette in onDraw with a Paint using a RadialGradient.
-        // For simplicity, we'll draw vignette manually in onDraw (pre‑RenderEffect era).
-        // But we can use RenderEffect for blur or other post‑processing.
-        // We'll keep it simple.
     }
 
     // ---- Public API ----
@@ -182,13 +170,13 @@ class NotebookRenderer(private val context: Context) {
         canvas.concat(transformMatrix)
 
         // Draw the static RenderNode (paper background, grain, lines, margin)
-        if (staticRenderNode.isValid) {
-            staticRenderNode.render(canvas)
+        if (staticNodeReady) {
+            staticRenderNode.drawInto(canvas)
         }
 
         // Draw the dynamic RenderNode (highlight, text)
-        if (dynamicRenderNode.isValid) {
-            dynamicRenderNode.render(canvas)
+        if (dynamicNodeReady) {
+            dynamicRenderNode.drawInto(canvas)
         }
 
         canvas.restore()
@@ -227,7 +215,6 @@ class NotebookRenderer(private val context: Context) {
             canvas.drawColor(Color.rgb(250, 245, 230))
 
             // ---- Paper grain (via RuntimeShader on a Paint) ----
-            // We'll draw a full-screen rect with the shader
             grainShader.setFloatUniform("uTime", System.currentTimeMillis() % 10000 / 10000f)
             grainShader.setFloatUniform("uIntensity", 1.0f)
             val grainPaint = Paint().apply {
@@ -250,6 +237,7 @@ class NotebookRenderer(private val context: Context) {
                 marginPaint
             )
 
+            staticNodeReady = true
         } finally {
             staticRenderNode.endRecording()
         }
@@ -279,6 +267,7 @@ class NotebookRenderer(private val context: Context) {
                 drawHumanizedText(canvas, text, line)
             }
 
+            dynamicNodeReady = true
         } finally {
             dynamicRenderNode.endRecording()
         }
@@ -340,12 +329,10 @@ class NotebookRenderer(private val context: Context) {
     }
 
     private fun clampPan() {
-        // Simple clamping to keep content visible
-        // For now, we just clamp the translation
-        // More sophisticated clamping can be added later
+        // Simple clamping – can be improved later
         val values = FloatArray(9)
         transformMatrix.getValues(values)
-        // Clamp translation based on view size and zoom
-        // This is a simplified version
+        // For now, we just keep the translation within reasonable bounds
+        // More advanced clamping will be added later.
     }
 }

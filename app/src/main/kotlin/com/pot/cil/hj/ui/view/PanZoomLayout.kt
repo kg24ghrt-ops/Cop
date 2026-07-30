@@ -12,9 +12,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Container that handles pan and zoom gestures for its child content.
- * Supports: pinch-to-zoom, double-tap to zoom, pan with fling, and
- * intelligent touch routing (passes single taps to children when not zooming).
+ * Pan/zoom container that shows the full A5 page centered,
+ * with pinch-to-zoom and pan for comfortable editing.
  */
 class PanZoomLayout @JvmOverloads constructor(
     context: Context,
@@ -23,58 +22,76 @@ class PanZoomLayout @JvmOverloads constructor(
 ) : FrameLayout(context, attrs, defStyleAttr) {
 
     companion object {
-        const val MIN_SCALE = 0.5f
-        const val MAX_SCALE = 4.0f
-        const val DOUBLE_TAP_SCALE = 2.0f
+        const val MIN_SCALE = 0.6f
+        const val MAX_SCALE = 3.5f
+        const val FIT_PAGE_SCALE = 1.0f
     }
 
-    // ── Transform State ──────────────────────────────────────
     private val matrix = Matrix()
     private val inverseMatrix = Matrix()
     private var scale = 1.0f
     private var transX = 0f
     private var transY = 0f
 
-    // ── Gesture Detectors ────────────────────────────────────
     private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
     private val gestureDetector = GestureDetector(context, GestureListener())
 
-    // ── Touch State ──────────────────────────────────────────
     private val lastFocus = PointF()
     private var isScaling = false
     private var isPanning = false
 
-    // ── Callbacks ────────────────────────────────────────────
-    var onTransformChanged: ((scale: Float, transX: Float, transY: Float) -> Unit)? = null
-    var onTapAtLocation: ((x: Float, y: Float) -> Unit)? = null
+    var onTransformChanged: ((Float, Float, Float) -> Unit)? = null
+    var onTapAtLocation: ((Float, Float) -> Unit)? = null
 
     init {
         setWillNotDraw(false)
     }
 
-    // ── Touch Handling ───────────────────────────────────────
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (childCount > 0 && changed) {
+            // Center the A5 page in the view
+            centerPage()
+        }
+    }
+
+    private fun centerPage() {
+        if (childCount == 0) return
+        val child = getChildAt(0)
+        val viewWidth = width.toFloat()
+        val viewHeight = height.toFloat()
+        val childWidth = child.measuredWidth.toFloat()
+        val childHeight = child.measuredHeight.toFloat()
+
+        // Fit page to screen width with some padding
+        val fitScale = (viewWidth / childWidth).coerceAtMost(1.0f) * 0.92f
+        
+        scale = fitScale
+        transX = (viewWidth - childWidth * scale) / 2
+        transY = (viewHeight - childHeight * scale) / 2
+        
+        applyTransform()
+    }
+
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         return when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastFocus.set(ev.x, ev.y)
-                false // Let children try first
+                false
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 isScaling = true
-                true // Intercept for zoom
+                true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (isScaling || (ev.pointerCount > 1)) {
-                    true
-                } else {
+                if (isScaling || ev.pointerCount > 1) true
+                else {
                     val dx = ev.x - lastFocus.x
                     val dy = ev.y - lastFocus.y
-                    if (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10) {
+                    if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
                         isPanning = true
                         true
-                    } else {
-                        false
-                    }
+                    } else false
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -88,12 +105,6 @@ class PanZoomLayout @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Transform touch to content coordinates for detectors
-        val transformedEvent = MotionEvent.obtain(event)
-        inverseMatrix.mapPoints(
-            floatArrayOf(transformedEvent.x, transformedEvent.y)
-        )
-        
         scaleDetector.onTouchEvent(event)
         gestureDetector.onTouchEvent(event)
 
@@ -104,10 +115,8 @@ class PanZoomLayout @JvmOverloads constructor(
             }
             MotionEvent.ACTION_MOVE -> {
                 if (isPanning && !isScaling) {
-                    val dx = event.x - lastFocus.x
-                    val dy = event.y - lastFocus.y
-                    transX += dx
-                    transY += dy
+                    transX += event.x - lastFocus.x
+                    transY += event.y - lastFocus.y
                     lastFocus.set(event.x, event.y)
                     applyTransform()
                 }
@@ -118,12 +127,9 @@ class PanZoomLayout @JvmOverloads constructor(
                 constrainTransform()
             }
         }
-
-        transformedEvent.recycle()
         return true
     }
 
-    // ── Transform Application ────────────────────────────────
     private fun applyTransform() {
         matrix.reset()
         matrix.postScale(scale, scale)
@@ -140,73 +146,53 @@ class PanZoomLayout @JvmOverloads constructor(
                 translationY = transY
             }
         }
-
         onTransformChanged?.invoke(scale, transX, transY)
     }
 
     private fun constrainTransform() {
         if (childCount == 0) return
         val child = getChildAt(0)
-        val contentWidth = child.width * scale
-        val contentHeight = child.height * scale
-        val viewWidth = width.toFloat()
-        val viewHeight = height.toFloat()
+        val cw = child.width * scale
+        val ch = child.height * scale
+        val vw = width.toFloat()
+        val vh = height.toFloat()
 
-        // Don't let content drift too far off screen
-        val minX = min(0f, viewWidth - contentWidth)
-        val maxX = max(0f, viewWidth - contentWidth)
-        val minY = min(0f, viewHeight - contentHeight)
-        val maxY = max(0f, viewHeight - contentHeight)
+        val minX = min(0f, vw - cw)
+        val maxX = max(0f, vw - cw)
+        val minY = min(0f, vh - ch)
+        val maxY = max(0f, vh - ch)
 
-        transX = transX.coerceIn(minX - 200f, maxX + 200f)
-        transY = transY.coerceIn(minY - 200f, maxY + 200f)
-
+        transX = transX.coerceIn(minX - 100f, maxX + 100f)
+        transY = transY.coerceIn(minY - 100f, maxY + 100f)
         applyTransform()
     }
 
-    fun resetTransform() {
-        scale = 1.0f
-        transX = 0f
-        transY = 0f
-        applyTransform()
-    }
+    fun resetTransform() = centerPage()
 
     fun zoomToPoint(targetScale: Float, focusX: Float, focusY: Float) {
         val newScale = targetScale.coerceIn(MIN_SCALE, MAX_SCALE)
-        val scaleFactor = newScale / scale
-
-        // Adjust translation to zoom toward focus point
-        transX = focusX - (focusX - transX) * scaleFactor
-        transY = focusY - (focusY - transY) * scaleFactor
+        val factor = newScale / scale
+        transX = focusX - (focusX - transX) * factor
+        transY = focusY - (focusY - transY) * factor
         scale = newScale
-
         applyTransform()
         constrainTransform()
     }
 
-    // ── Gesture Listeners ────────────────────────────────────
+    fun getCurrentScale() = scale
+
     private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            isScaling = true
-            return true
-        }
-
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val newScale = (scale * detector.scaleFactor).coerceIn(MIN_SCALE, MAX_SCALE)
-            val scaleFactor = newScale / scale
-
-            val focusX = detector.focusX
-            val focusY = detector.focusY
-
-            transX = focusX - (focusX - transX) * scaleFactor
-            transY = focusY - (focusY - transY) * scaleFactor
+        override fun onScaleBegin(d: ScaleGestureDetector) = true.also { isScaling = true }
+        override fun onScale(d: ScaleGestureDetector): Boolean {
+            val newScale = (scale * d.scaleFactor).coerceIn(MIN_SCALE, MAX_SCALE)
+            val factor = newScale / scale
+            transX = d.focusX - (d.focusX - transX) * factor
+            transY = d.focusY - (d.focusY - transY) * factor
             scale = newScale
-
             applyTransform()
             return true
         }
-
-        override fun onScaleEnd(detector: ScaleGestureDetector) {
+        override fun onScaleEnd(d: ScaleGestureDetector) {
             isScaling = false
             constrainTransform()
         }
@@ -214,36 +200,20 @@ class PanZoomLayout @JvmOverloads constructor(
 
     private inner class GestureListener : GestureDetector.SimpleOnGestureListener() {
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            val targetScale = if (scale > 1.5f) 1.0f else DOUBLE_TAP_SCALE
-            zoomToPoint(targetScale, e.x, e.y)
+            val target = if (scale > 1.5f) {
+                // Return to fit
+                val child = getChildAt(0)
+                (width.toFloat() / child.width * 0.92f).coerceAtMost(1.0f)
+            } else 2.5f
+            zoomToPoint(target, e.x, e.y)
             return true
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            // Transform tap to content coordinates
             val pts = floatArrayOf(e.x, e.y)
             inverseMatrix.mapPoints(pts)
             onTapAtLocation?.invoke(pts[0], pts[1])
             return true
         }
-
-        override fun onFling(
-            e1: MotionEvent?,
-            e2: MotionEvent,
-            velocityX: Float,
-            velocityY: Float
-        ): Boolean {
-            // Optional: Add fling animation with OverScroller
-            return false
-        }
     }
-
-    // ── Public API ───────────────────────────────────────────
-    fun getContentCoordinates(screenX: Float, screenY: Float): PointF {
-        val pts = floatArrayOf(screenX, screenY)
-        inverseMatrix.mapPoints(pts)
-        return PointF(pts[0], pts[1])
-    }
-
-    fun getCurrentScale(): Float = scale
 }

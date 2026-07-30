@@ -4,44 +4,36 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.text.TextPaint
-import android.text.Layout
-import android.text.StaticLayout
-import android.text.TextDirectionHeuristics
-import android.os.Build
 import kotlin.random.Random
 
 /**
- * Renders text with handwriting-like imperfections: baseline jitter,
- * random character spacing, ink weight variation, and slight wobble.
+ * Renders text with realistic handwriting simulation.
  * 
- * Works with ALL languages including Myanmar, Arabic, Thai, Devanagari,
- * by operating on measured glyph runs rather than individual characters.
+ * Human handwriting characteristics at real scale:
+ * - Baseline jitter: ±0.5mm (subtle, not cartoonish)
+ * - Character spacing: varies by ±0.3mm
+ * - Ink weight: 0.3-0.5mm stroke (ballpoint pen)
+ * - Slight rotation: ±1.5 degrees per cluster
+ * - Size variation: ±5% per character
+ * 
+ * Works with ALL languages by operating on grapheme clusters.
  */
 class HandwritingPaint {
     
-    private val random = Random.Default
+    // ── Configuration (real human handwriting) ───────────────
+    var baselineJitterMm: Float = 0.5f
+    var spacingVariationMm: Float = 0.3f
+    var inkWeightMm: Float = 0.35f
+    var rotationDegrees: Float = 1.5f
+    var sizeVariationPercent: Float = 0.05f
+    var enableEffects: Boolean = true
     
-    // Configuration
-    var baselineJitterAmount: Float = 2.5f      // Max pixels of Y wobble
-    var spacingVariation: Float = 0.8f          // Max extra/less space between runs
-    var inkWeightVariation: Float = 0.4f          // Stroke width variation
-    var wobbleAmount: Float = 1.2f              // Path wobble for cursive feel
-    var enableJitter: Boolean = true
-    var enableSpacing: Boolean = true
-    var enableInkVariation: Boolean = true
-    
-    // Seed for consistent rendering of same text
-    private var currentSeed: Int = 0
+    // Pixel conversion (at 160dpi, 1mm ≈ 6.3px)
+    private val pxPerMm = 6.3f
     
     /**
-     * Draw text with handwriting simulation onto canvas.
-     * 
-     * @param canvas The canvas to draw on
-     * @param text The text to draw
-     * @param x Start X position
-     * @param y Baseline Y position  
-     * @param paint The base paint (will be modified for effects)
-     * @param seed Random seed for consistent rendering
+     * Draw text with subtle handwriting imperfections.
+     * Seed ensures same text always renders identically.
      */
     fun drawHandwrittenText(
         canvas: Canvas,
@@ -53,83 +45,58 @@ class HandwritingPaint {
     ) {
         if (text.isEmpty()) return
         
-        currentSeed = seed
-        val baseStrokeWidth = paint.strokeWidth
-        
-        // For RTL and complex scripts, we use StaticLayout to handle shaping
-        // then extract glyph runs for jitter application
-        if (shouldUseGlyphRuns(text)) {
-            drawWithGlyphRuns(canvas, text, x, y, paint)
-        } else {
-            // Simple path for basic Latin text
-            drawWithGlyphRuns(canvas, text, x, y, paint)
+        if (!enableEffects) {
+            canvas.drawText(text.toString(), x, y, paint)
+            return
         }
         
-        paint.strokeWidth = baseStrokeWidth
-    }
-    
-    /**
-     * Draw text by breaking it into grapheme clusters (user-perceived characters)
-     * and applying jitter to each cluster's position. This works for ALL languages
-     * because we measure actual rendered glyphs, not code points.
-     */
-    private fun drawWithGlyphRuns(
-        canvas: Canvas,
-        text: CharSequence,
-        x: Float,
-        y: Float,
-        paint: TextPaint
-    ) {
+        val localRandom = Random(seed)
         val textString = text.toString()
-        val length = textString.length
-        var currentX = x
-        
-        // Use a consistent random sequence for this text
-        val localRandom = Random(currentSeed)
-        
-        // Break text into grapheme clusters using ICU boundaries
         val clusters = extractGraphemeClusters(textString)
         
-        for ((index, cluster) in clusters.withIndex()) {
-            // Measure this cluster's width
+        var currentX = x
+        val baseTextSize = paint.textSize
+        
+        for (cluster in clusters) {
             val clusterWidth = paint.measureText(cluster)
             
-            // Apply random spacing variation
-            val spacingOffset = if (enableSpacing) {
-                (localRandom.nextFloat() - 0.5f) * spacingVariation * 2
-            } else 0f
+            // Subtle baseline jitter (±0.5mm)
+            val jitterY = (localRandom.nextFloat() - 0.5f) * baselineJitterMm * pxPerMm * 2
             
-            // Apply baseline jitter
-            val jitterY = if (enableJitter) {
-                (localRandom.nextFloat() - 0.5f) * baselineJitterAmount * 2
-            } else 0f
+            // Subtle rotation (±1.5°)
+            val rotation = (localRandom.nextFloat() - 0.5f) * rotationDegrees * 2
             
-            // Apply ink weight variation
-            if (enableInkVariation) {
-                val weightVar = (localRandom.nextFloat() - 0.5f) * inkWeightVariation * 2
-                paint.strokeWidth = paint.textSize * 0.06f + weightVar
-                // Slightly vary alpha for ink wetness effect
-                paint.alpha = (230 + localRandom.nextInt(25)).coerceIn(180, 255)
-            }
+            // Size variation (±5%)
+            val sizeMultiplier = 1f + (localRandom.nextFloat() - 0.5f) * sizeVariationPercent * 2
             
-            // Draw the cluster with jitter
-            canvas.drawText(cluster, currentX + spacingOffset, y + jitterY, paint)
+            // Spacing variation (±0.3mm)
+            val spacingOffset = (localRandom.nextFloat() - 0.5f) * spacingVariationMm * pxPerMm * 2
             
-            // Advance position
-            currentX += clusterWidth + spacingOffset + paint.textSize * 0.05f
+            // Ink weight variation (ballpoint feel)
+            val weightVar = (localRandom.nextFloat() - 0.5f) * 0.5f
+            paint.strokeWidth = (inkWeightMm * pxPerMm) + weightVar
+            
+            // Slight alpha variation for ink wetness
+            paint.alpha = (245 + localRandom.nextInt(10)).coerceIn(230, 255)
+            
+            canvas.save()
+            canvas.translate(currentX + spacingOffset, y + jitterY)
+            canvas.rotate(rotation)
+            paint.textSize = baseTextSize * sizeMultiplier
+            canvas.drawText(cluster, 0f, 0f, paint)
+            canvas.restore()
+            
+            currentX += clusterWidth + spacingOffset + (baseTextSize * 0.12f)
         }
         
+        paint.textSize = baseTextSize
         paint.alpha = 255
+        paint.strokeWidth = 0f
     }
     
     /**
-     * Extract grapheme clusters from text. This properly handles:
-     * - Myanmar (e.g., က္က + ာ + ့ = one cluster)
-     * - Arabic (letters + diacritics + tashkeel)
-     * - Thai/Lao (consonant + vowel + tone mark)
-     * - Devanagari (consonant cluster + vowel signs)
-     * - Emoji (ZWJ sequences)
-     * - Korean Hangul jamo composition
+     * Extract grapheme clusters — user-perceived characters.
+     * Handles Myanmar, Arabic, Thai, Devanagari, Hangul, emoji, etc.
      */
     private fun extractGraphemeClusters(text: String): List<String> {
         val clusters = mutableListOf<String>()
@@ -140,21 +107,19 @@ class HandwritingPaint {
             val codePoint = text.codePointAt(i)
             i += Character.charCount(codePoint)
             
-            // Absorb subsequent combining characters/mark characters
-            while (i < text.length && isCombiningCharacter(text.codePointAt(i))) {
+            // Absorb combining characters
+            while (i < text.length && isCombining(text.codePointAt(i))) {
                 i += Character.charCount(text.codePointAt(i))
             }
             
-            // Handle Myanmar medial consonants (e.g., ျ, ြ, ှ, ္)
-            // These form clusters with the preceding consonant
+            // Myanmar medials (ြ ျ ှ ္)
             while (i < text.length && isMyanmarMedial(text.codePointAt(i))) {
                 i += Character.charCount(text.codePointAt(i))
             }
             
-            // Handle Myanmar asat (်) which creates stacked consonants
+            // Myanmar asat (်) + following consonant cluster
             if (i < text.length && text.codePointAt(i) == 0x103A) {
                 i += Character.charCount(text.codePointAt(i))
-                // May be followed by another consonant + medials
                 while (i < text.length && isMyanmarConsonant(text.codePointAt(i))) {
                     i += Character.charCount(text.codePointAt(i))
                     while (i < text.length && isMyanmarMedial(text.codePointAt(i))) {
@@ -163,11 +128,8 @@ class HandwritingPaint {
                 }
             }
             
-            // Handle zero-width joiner sequences (emoji, Arabic contextual forms)
-            while (i < text.length && (
-                text.codePointAt(i) == 0x200D || // ZWJ
-                text.codePointAt(i) == 0x200C    // ZWNJ
-            )) {
+            // ZWJ sequences (emoji, Arabic contextual)
+            while (i < text.length && isJoiner(text.codePointAt(i))) {
                 i += Character.charCount(text.codePointAt(i))
                 if (i < text.length) {
                     i += Character.charCount(text.codePointAt(i))
@@ -180,135 +142,43 @@ class HandwritingPaint {
         return clusters
     }
     
-    /** Check if code point is a combining character */
-    private fun isCombiningCharacter(codePoint: Int): Boolean {
-        return when {
-            // Combining Diacritical Marks
-            codePoint in 0x0300..0x036F -> true
-            // Combining Diacritical Marks Extended
-            codePoint in 0x1AB0..0x1AFF -> true
-            // Combining Diacritical Marks Supplement
-            codePoint in 0x1DC0..0x1DFF -> true
-            // Combining Diacritical Marks for Symbols
-            codePoint in 0x20D0..0x20FF -> true
-            // Combining Half Marks
-            codePoint in 0xFE20..0xFE2F -> true
-            // Arabic diacritics (tashkeel)
-            codePoint in 0x064B..0x065F -> true
-            codePoint == 0x0670 -> true
-            // Hebrew points
-            codePoint in 0x0591..0x05BD -> true
-            codePoint in 0x05BF..0x05C7 -> true
-            // Thai/Lao tone marks and vowels that combine
-            codePoint in 0x0E31..0x0E3A -> true // Thai above/below
-            codePoint in 0x0E47..0x0E4E -> true // Thai tone marks
-            codePoint in 0x0EB1..0x0EB9 -> true // Lao
-            codePoint in 0x0EC8..0x0ECD -> true // Lao tone
-            // Myanmar dependent vowels, signs, tone marks
-            codePoint in 0x102B..0x103E -> true
-            codePoint in 0x1056..0x1059 -> true
-            codePoint in 0x105E..0x1060 -> true
-            // Devanagari dependent vowels and marks
-            codePoint in 0x093E..0x094F -> true
-            codePoint in 0x0951..0x0957 -> true
-            codePoint in 0x0962..0x0963 -> true
-            // Bengali, Gurmukhi, Gujarati, etc.
-            codePoint in 0x09BE..0x09CC -> true
-            codePoint in 0x0A3E..0x0A4C -> true
-            codePoint in 0x0ABE..0x0ACC -> true
-            codePoint in 0x0B3E..0x0B4C -> true
-            codePoint in 0x0BBE..0x0BCC -> true
-            codePoint in 0x0C3E..0x0C4C -> true
-            codePoint in 0x0CBE..0x0CCC -> true
-            codePoint in 0x0D3E..0x0D4C -> true
-            // Khmer
-            codePoint in 0x17B6..0x17D3 -> true
-            // Tibetan
-            codePoint in 0x0F18..0x0F19 -> true
-            codePoint in 0x0F35..0x0F39 -> true
-            codePoint in 0x0F3E..0x0F3F -> true
-            codePoint in 0x0F71..0x0F84 -> true
-            codePoint in 0x0F86..0x0FBC -> true
-            // Sinhala
-            codePoint in 0x0DCA..0x0DDF -> true
-            // Hangul jamo that combine (jungseong, jongseong)
-            codePoint in 0x1161..0x1175 -> true // jungseong
-            codePoint in 0x11A8..0x11C2 -> true // jongseong
-            // Variation selectors
-            codePoint in 0xFE00..0xFE0F -> true
-            codePoint in 0xE0100..0xE01EF -> true
-            else -> false
-        }
+    private fun isCombining(cp: Int): Boolean = when {
+        cp in 0x0300..0x036F -> true      // Combining Diacritical Marks
+        cp in 0x1AB0..0x1AFF -> true      // Extended
+        cp in 0x1DC0..0x1DFF -> true      // Supplement
+        cp in 0x20D0..0x20FF -> true      // For Symbols
+        cp in 0xFE20..0xFE2F -> true      // Half Marks
+        cp in 0x064B..0x065F -> true      // Arabic tashkeel
+        cp == 0x0670 -> true
+        cp in 0x0591..0x05BD -> true      // Hebrew
+        cp in 0x05BF..0x05C7 -> true
+        cp in 0x0E31..0x0E3A -> true      // Thai
+        cp in 0x0E47..0x0E4E -> true
+        cp in 0x0EB1..0x0EB9 -> true      // Lao
+        cp in 0x0EC8..0x0ECD -> true
+        cp in 0x102B..0x103E -> true      // Myanmar
+        cp in 0x1056..0x1059 -> true
+        cp in 0x105E..0x1060 -> true
+        cp in 0x093E..0x094F -> true      // Devanagari
+        cp in 0x0951..0x0957 -> true
+        cp in 0x0962..0x0963 -> true
+        cp in 0x09BE..0x09CC -> true      // Bengali etc
+        cp in 0x0A3E..0x0A4C -> true
+        cp in 0x0ABE..0x0ACC -> true
+        cp in 0x0B3E..0x0B4C -> true
+        cp in 0x0BBE..0x0BCC -> true
+        cp in 0x0C3E..0x0C4C -> true
+        cp in 0x0CBE..0x0CCC -> true
+        cp in 0x0D3E..0x0D4C -> true
+        cp in 0x17B6..0x17D3 -> true      // Khmer
+        cp in 0x1161..0x1175 -> true      // Hangul jungseong
+        cp in 0x11A8..0x11C2 -> true      // Hangul jongseong
+        cp in 0xFE00..0xFE0F -> true      // Variation selectors
+        cp in 0xE0100..0xE01EF -> true
+        else -> false
     }
     
-    /** Check if code point is a Myanmar medial consonant */
-    private fun isMyanmarMedial(codePoint: Int): Boolean {
-        return codePoint in 0x103B..0x103E
-    }
-    
-    /** Check if code point is a Myanmar consonant */
-    private fun isMyanmarConsonant(codePoint: Int): Boolean {
-        return codePoint in 0x1000..0x102A
-    }
-    
-    /** Determine if text needs complex shaping */
-    private fun shouldUseGlyphRuns(text: CharSequence): Boolean {
-        // Always use glyph runs for proper handling
-        return true
-    }
-    
-    /**
-     * Draw a more organic path-based text for cursive scripts.
-     * Creates slight wobble in the stroke for fountain-pen feel.
-     */
-    fun drawCursiveText(
-        canvas: Canvas,
-        text: String,
-        x: Float,
-        y: Float,
-        paint: TextPaint,
-        seed: Int = text.hashCode()
-    ) {
-        val localRandom = Random(seed)
-        val path = Path()
-        
-        // For cursive, we draw each word with connecting wobble
-        val words = text.split(" ")
-        var currentX = x
-        
-        for ((wordIndex, word) in words.withIndex()) {
-            val wordWidth = paint.measureText(word)
-            
-            // Create wobbly baseline path
-            val points = (0..10).map { t ->
-                val px = currentX + (wordWidth * t / 10)
-                val py = y + (localRandom.nextFloat() - 0.5f) * wobbleAmount
-                Pair(px, py)
-            }
-            
-            if (points.isNotEmpty()) {
-                path.moveTo(points[0].first, points[0].second)
-                for (i in 1 until points.size) {
-                    // Quadratic bezier for smooth wobble
-                    val midX = (points[i-1].first + points[i].first) / 2
-                    val midY = (points[i-1].second + points[i].second) / 2
-                    path.quadTo(points[i-1].first, points[i-1].second, midX, midY)
-                }
-                path.lineTo(points.last().first, points.last().second)
-            }
-            
-            // Draw text along the wobbly path (simplified - just draw with jitter)
-            drawWithGlyphRuns(canvas, word, currentX, y, paint)
-            
-            currentX += wordWidth + paint.measureText(" ")
-            
-            // Draw space
-            if (wordIndex < words.size - 1) {
-                val spaceWidth = paint.measureText(" ") * (0.8f + localRandom.nextFloat() * 0.4f)
-                currentX += spaceWidth
-            }
-        }
-        
-        paint.style = Paint.Style.FILL
-    }
+    private fun isMyanmarMedial(cp: Int) = cp in 0x103B..0x103E
+    private fun isMyanmarConsonant(cp: Int) = cp in 0x1000..0x102A
+    private fun isJoiner(cp: Int) = cp == 0x200D || cp == 0x200C
 }

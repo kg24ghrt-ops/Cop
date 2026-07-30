@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout 
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#1A1A2E">
+    android:background="#2A2A3E">
 
-    <!-- Pan/Zoom Container -->
+    <!-- Dark desk background with subtle texture feel -->
+
     <com.pot.cil.hj.ui.view.PanZoomLayout
         android:id="@+id/panZoomLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <!-- Notebook Editor (Paper + Text) -->
         <com.pot.cil.hj.ui.view.NotebookEditor
             android:id="@+id/notebookEditor"
             android:layout_width="wrap_content"
@@ -20,15 +19,15 @@
 
     </com.pot.cil.hj.ui.view.PanZoomLayout>
 
-    <!-- Floating Toolbar -->
+    <!-- Toolbar -->
     <com.pot.cil.hj.ui.view.ToolbarView
         android:id="@+id/toolbar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="16dp" />
+        android:layout_marginTop="12dp" />
 
-    <!-- Zoom Level Indicator -->
+    <!-- Zoom indicator -->
     <TextView
         android:id="@+id/tvZoomLevel"
         android:layout_width="wrap_content"
@@ -36,17 +35,6 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:text="100%"
-        android:textColor="#80FFFFFF"
-        android:textSize="14sp" />
-
-    <!-- Hint for gestures -->
-    <TextView
-        android:id="@+id/tvHint"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="32dp"
-        android:text="Pinch to zoom • Double-tap to reset • Tap line to type"
         android:textColor="#60FFFFFF"
         android:textSize="12sp" />
 

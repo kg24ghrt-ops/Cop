@@ -6,7 +6,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pot.cil.hj.databinding.ActivityMainBinding
-import com.pot.cil.hj.ui.view.NotebookPaperView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -22,7 +21,6 @@ class MainActivity : AppCompatActivity() {
         setupPanZoom()
         setupToolbar()
         setupEditor()
-        setupGestures()
     }
 
     private fun setupPanZoom() {
@@ -61,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             onSelectAll = {
-                val allIndices = (0 until NotebookPaperView.LINE_COUNT).toSet()
+                val allIndices = (0 until com.pot.cil.hj.ui.view.NotebookPaperView.LINE_COUNT).toSet()
                 binding.notebookEditor.paperView.selectedLineIndices = allIndices
                 binding.toolbar.setSelectionMode(true, allIndices.size)
             }
@@ -82,22 +80,6 @@ class MainActivity : AppCompatActivity() {
     private fun setupEditor() {
         binding.notebookEditor.onPageChanged = { page ->
             // Auto-save or sync could happen here
-        }
-
-        binding.notebookEditor.onLineCountChanged = { count ->
-            // Update any UI showing line count
-        }
-    }
-
-    private fun setupGestures() {
-        // Hide hint after a few seconds
-        lifecycleScope.launch {
-            delay(4000)
-            binding.tvHint.animate()
-                .alpha(0f)
-                .setDuration(500)
-                .withEndAction { binding.tvHint.visibility = View.GONE }
-                .start()
         }
     }
 

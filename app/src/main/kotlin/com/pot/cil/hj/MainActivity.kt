@@ -74,6 +74,11 @@ class MainActivity : AppCompatActivity() {
                 binding.toolbar.setSelectionMode(false)
                 Toast.makeText(this@MainActivity, "Deleted", Toast.LENGTH_SHORT).show()
             }
+
+            // NEW: export callback
+            onExport = {
+                binding.notebookEditor.exportToPng()
+            }
         }
     }
 

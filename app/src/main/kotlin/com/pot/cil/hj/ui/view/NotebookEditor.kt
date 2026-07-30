@@ -1,10 +1,18 @@
 package com.pot.cil.hj.ui.view
 
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.net.Uri
+import android.os.Environment
 import android.util.AttributeSet
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import androidx.core.content.FileProvider
 import com.pot.cil.hj.data.NotebookPage
+import java.io.File
+import java.io.FileOutputStream
 
 class NotebookEditor @JvmOverloads constructor(
     context: Context,
@@ -159,6 +167,87 @@ class NotebookEditor @JvmOverloads constructor(
     }
 
     fun getSelectedLineIndices(): Set<Int> = selectedLines.toSet()
-    fun deleteSelectedLines() { /* ... */ }
+    
+    fun deleteSelectedLines() {
+        // Implement deletion logic as needed
+        // For now, just clear text on selected lines
+        selectedLines.forEach { idx ->
+            editTexts[idx]?.setText("")
+            currentPage.addOrUpdateLine(idx, "", 0)
+        }
+        clearSelection()
+    }
+
     fun copySelectedLines(): List<String> = emptyList()
+
+    // ============ NEW EXPORT METHOD ============
+    fun exportToPng() {
+        val paperWidth = paperView.width
+        val paperHeight = paperView.height
+        if (paperWidth == 0 || paperHeight == 0) return
+
+        val bitmap = Bitmap.createBitmap(paperWidth, paperHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        // Draw paper background and ruled lines
+        paperView.draw(canvas)
+
+        // Draw each line's text at its correct position
+        // Use drawingCache for each edit text; it's acceptable for small views.
+        for ((_, editText) in editTexts) {
+            val x = editText.left.toFloat()
+            val y = editText.top.toFloat()
+            canvas.save()
+            canvas.translate(x, y)
+            // Enable drawing cache and draw it
+            editText.isDrawingCacheEnabled = true
+            val textBitmap = editText.drawingCache
+            if (textBitmap != null && !textBitmap.isRecycled) {
+                canvas.drawBitmap(textBitmap, 0f, 0f, null)
+            }
+            editText.isDrawingCacheEnabled = false
+            canvas.restore()
+        }
+
+        // Save to external Pictures folder
+        val filename = "notebook_${System.currentTimeMillis()}.png"
+        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        if (outputDir == null) {
+            // Fallback: internal cache
+            context.toast("Export failed: storage not available")
+            return
+        }
+        outputDir.mkdirs()
+        val file = File(outputDir, filename)
+
+        try {
+            FileOutputStream(file).use { fos ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            context.toast("Error saving file: ${e.message}")
+            return
+        } finally {
+            bitmap.recycle()
+        }
+
+        // Share via FileProvider
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Share Notebook"))
+    }
+
+    // Helper extension for Toast
+    private fun Context.toast(msg: String) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
 }

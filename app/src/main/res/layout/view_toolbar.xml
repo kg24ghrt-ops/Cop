@@ -73,4 +73,13 @@
         android:visibility="gone"
         android:contentDescription="Delete selected" />
 
+    <!-- NEW: Export button -->
+    <ImageButton
+        android:id="@+id/btnExport"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_save"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Export as PNG" />
+
 </LinearLayout>

@@ -23,6 +23,7 @@ class ToolbarView @JvmOverloads constructor(
     var onSelectAll: (() -> Unit)? = null
     var onClearSelection: (() -> Unit)? = null
     var onDeleteSelected: (() -> Unit)? = null
+    var onExport: (() -> Unit)? = null   // NEW
 
     init {
         orientation = HORIZONTAL
@@ -34,6 +35,7 @@ class ToolbarView @JvmOverloads constructor(
         binding.btnSelectAll.setOnClickListener { onSelectAll?.invoke() }
         binding.btnClear.setOnClickListener { onClearSelection?.invoke() }
         binding.btnDelete.setOnClickListener { onDeleteSelected?.invoke() }
+        binding.btnExport.setOnClickListener { onExport?.invoke() }   // NEW
     }
 
     fun setSelectionMode(active: Boolean, count: Int = 0) {

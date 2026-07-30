@@ -160,7 +160,7 @@ class HandwritingPaint {
             val drawY = y + jitterY
             
             // PASS 1: Ink bleed (feathering into paper)
-            if (inkFeathering > 0 && enableMistakes) {
+            if (inkFeathering > 0f && enableMistakes) {
                 drawInkBleedPass(canvas, cluster, drawX, drawY, basePaint, 
                     baseTextSize * sizeMult, pressure, clusterRandom)
             }
@@ -170,7 +170,7 @@ class HandwritingPaint {
                 baseTextSize * sizeMult, pressure, penAngle, clusterRandom, clusterSeed)
             
             // PASS 3: Edge noise (paper texture interaction)
-            if (edgeRoughness > 0 && enableMistakes) {
+            if (edgeRoughness > 0f && enableMistakes) {
                 drawEdgeNoisePass(canvas, cluster, drawX, drawY, basePaint,
                     baseTextSize * sizeMult, pressure, clusterRandom)
             }
@@ -188,7 +188,7 @@ class HandwritingPaint {
             
             // Occasional shaky underline (hand tremor)
             if (enableMistakes && clusterRandom.nextFloat() < 0.04f) {
-                drawShakyUnderline(canvas, drawX, y, clusterWidth, baseTextSize, clusterRandom)
+                drawShakyUnderline(canvas, currentX, y, clusterWidth, baseTextSize, clusterRandom)
             }
             
             currentX += clusterWidth + skipGap + baseTextSize * 0.06f
@@ -220,7 +220,7 @@ class HandwritingPaint {
         val bleedPaint = TextPaint(basePaint).apply {
             this.textSize = textSize
             color = basePaint.color
-            alpha = (40 * inkFeathering).toInt().coerceIn(15, 80)
+            alpha = (40f * inkFeathering).toInt().coerceIn(15, 80)
             // Soft edges for bleed
             maskFilter = BlurMaskFilter(textSize * 0.04f * inkFeathering, BlurMaskFilter.Blur.NORMAL)
         }
@@ -292,7 +292,7 @@ class HandwritingPaint {
         }
         
         // Micro-tremor: tiny rapid wobble for hand unsteadiness
-        if (microTremor > 0 && enableMistakes) {
+        if (microTremor > 0f && enableMistakes) {
             val tremorPaint = TextPaint(mainPaint).apply {
                 alpha = (mainPaint.alpha * 0.25f).toInt()
             }
@@ -318,7 +318,7 @@ class HandwritingPaint {
         textSize: Float,
         pressure: Float,
         random: Random
-    ) ) {
+    ) {
         // Get text bounds for edge sampling
         val bounds = Rect()
         val measurePaint = TextPaint(basePaint).apply { this.textSize = textSize }
@@ -326,23 +326,24 @@ class HandwritingPaint {
         
         val noisePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = basePaint.color
-            alpha = (60 * edgeRoughness * pressure).toInt().coerceIn(20, 120)
+            alpha = (60f * edgeRoughness * pressure).toInt().coerceIn(20, 120)
             strokeWidth = textSize * 0.015f
             style = Paint.Style.STROKE
         }
         
         // Add noise dots along the text baseline area
-        val width = measurePaint.measureText(text)
-        val noiseCount = (width / textSize * 8 * edgeRoughness).toInt()
+        val textWidth = measurePaint.measureText(text)
+        val noiseCount = (textWidth / textSize * 8f * edgeRoughness).toInt()
         
         for (i in 0 until noiseCount) {
-            val nx = x + random.nextFloat() * width
+            val nx = x + random.nextFloat() * textWidth
             val ny = y + (random.nextFloat() - 0.3f) * textSize * 0.6f
             val radius = textSize * 0.008f * (0.5f + random.nextFloat())
             
             if (random.nextFloat() < 0.3f) {
                 // Small dot
-                canvas.drawCircle(nx, ny, radius, noisePaint.apply { style = Paint.Style.FILL })
+                val dotPaint = Paint(noisePaint).apply { style = Paint.Style.FILL }
+                canvas.drawCircle(nx, ny, radius, dotPaint)
             } else {
                 // Tiny line
                 val len = textSize * 0.02f * random.nextFloat()
@@ -377,7 +378,7 @@ class HandwritingPaint {
         if (clusterIndex == 0 && random.nextFloat() < 0.6f) {
             val wetPaint = TextPaint(basePaint).apply {
                 this.textSize = textSize
-                alpha = (30 * pressure).toInt()
+                alpha = (30f * pressure).toInt()
                 color = Color.BLACK  // Extra dark for wet ink
                 maskFilter = BlurMaskFilter(textSize * 0.02f, BlurMaskFilter.Blur.NORMAL)
             }
@@ -389,11 +390,13 @@ class HandwritingPaint {
         
         // Dry spot (occasional lighter patch simulating skipped ink)
         if (random.nextFloat() < 0.08f) {
+            val measurePaint = TextPaint(basePaint).apply { this.textSize = textSize }
+            val textWidth = measurePaint.measureText(text)
             val dryWidth = textSize * (0.1f + random.nextFloat() * 0.3f)
-            val dryX = x + random.nextFloat() * (basePaint.measureText(text) - dryWidth)
+            val dryX = x + random.nextFloat() * (textWidth - dryWidth)
             val dryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = NotebookColors.PaperBackground  // Matches paper
-                alpha = (100 + random.nextInt(80))
+                color = Color.parseColor("#FEFCF3")  // Paper background color
+                alpha = 100 + random.nextInt(80)
                 maskFilter = BlurMaskFilter(textSize * 0.03f, BlurMaskFilter.Blur.NORMAL)
             }
             canvas.drawRect(dryX, y - textSize * 0.6f, dryX + dryWidth, y + textSize * 0.2f, dryPaint)
@@ -429,14 +432,16 @@ class HandwritingPaint {
             val br = radius * (0.3f + random.nextFloat() * 0.7f)
             val alpha = (150 + random.nextInt(80)).coerceIn(120, 255)
             
-            canvas.drawCircle(bx, by, br, basePaint.apply { this.alpha = alpha })
+            val blobPaint = Paint(basePaint).apply { this.alpha = alpha }
+            canvas.drawCircle(bx, by, br, blobPaint)
         }
         
         // Dark center
-        canvas.drawCircle(x, y, radius * 0.4f, basePaint.apply { 
-            alpha = 240 
+        val centerPaint = Paint(basePaint).apply {
+            alpha = 240
             maskFilter = BlurMaskFilter(radius * 0.2f, BlurMaskFilter.Blur.NORMAL)
-        })
+        }
+        canvas.drawCircle(x, y, radius * 0.4f, centerPaint)
     }
     
     /**

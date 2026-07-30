@@ -71,7 +71,7 @@ class LineEditText @JvmOverloads constructor(
         // typeface = Typeface.createFromAsset(context.assets, "fonts/handwriting.ttf")
         // Fallback: system sans with fake bold for weight
         typeface = Typeface.DEFAULT
-        setFakeBoldText(true)
+        paint.isFakeBoldText = true
     }
 
     private fun setupListeners() {

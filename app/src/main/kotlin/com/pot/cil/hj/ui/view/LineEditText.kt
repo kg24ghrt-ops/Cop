@@ -1,8 +1,7 @@
 package com.pot.cil.hj.ui.view
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
+import android.graphics.*
 import android.text.Editable
 import android.text.TextPaint
 import android.text.TextWatcher
@@ -13,12 +12,7 @@ import androidx.appcompat.widget.AppCompatEditText
 import com.pot.cil.hj.ui.theme.NotebookColors
 
 /**
- * Single-line editor with real-scale handwriting rendering.
- * 
- * Real human handwriting:
- * - Text size: ~3.5mm x-height ≈ 22px at 160dpi
- * - This equals roughly 14-15pt font
- * - Line spacing 7.1mm gives comfortable 2mm gap below text
+ * Single-line editor with ultra-realistic handwriting rendering.
  */
 class LineEditText @JvmOverloads constructor(
     context: Context,
@@ -29,12 +23,24 @@ class LineEditText @JvmOverloads constructor(
     var lineIndex: Int = 0
     var onLineActionListener: OnLineActionListener? = null
 
-    private val handwritingPaint = HandwritingPaint()
+    private val handwritingPaint = HandwritingPaint().apply {
+        // Tuned for college-ruled notebook at 3.5mm text
+        shakiness = 0.7f
+        inkPoolChance = 0.12f
+        pressureVariation = 0.65f
+        rotationDrift = 1.8f
+        microTremor = 0.4f
+        skipConnectionChance = 0.05f
+        baselineWander = 1.2f
+        inkFeathering = 0.9f
+        edgeRoughness = 0.5f
+        penAngle = 40f
+        velocityPressure = true
+    }
     
-    // Real scale: 3.5mm text = ~22px at baseline
     companion object {
-        const val REAL_TEXT_SIZE_PX = 26f       // ~4.1mm, comfortable for handwriting
-        const val REAL_TEXT_SIZE_SP = 16f       // For accessibility scaling
+        const val REAL_TEXT_SIZE_PX = 26f
+        const val REAL_TEXT_SIZE_SP = 16f
     }
 
     interface OnLineActionListener {
@@ -52,19 +58,20 @@ class LineEditText @JvmOverloads constructor(
     }
 
     private fun setupAppearance() {
-        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        setBackgroundColor(Color.TRANSPARENT)
         textSize = REAL_TEXT_SIZE_SP
         includeFontPadding = false
         setPadding(0, 0, 0, 0)
         imeOptions = EditorInfo.IME_ACTION_NEXT
         isSingleLine = true
-        
-        // Hide default text rendering — we draw ourselves
-        setTextColor(android.graphics.Color.TRANSPARENT)
+        setTextColor(Color.TRANSPARENT)
         setCursorVisible(true)
         
-        // Use a handwriting-friendly font if available
-        typeface = android.graphics.Typeface.DEFAULT
+        // IMPORTANT: Use a handwriting font for best results
+        // typeface = Typeface.createFromAsset(context.assets, "fonts/handwriting.ttf")
+        // Fallback: system sans with fake bold for weight
+        typeface = Typeface.DEFAULT
+        setFakeBoldText(true)
     }
 
     private fun setupListeners() {
@@ -132,16 +139,22 @@ class LineEditText @JvmOverloads constructor(
             return
         }
 
+        // Configure text paint for handwriting
         val textPaint = TextPaint(paint).apply {
             color = NotebookColors.InkBlack
             this.textSize = this@LineEditText.textSize
             isAntiAlias = true
-            // Slightly heavier for ballpoint pen feel
-            strokeWidth = 1.2f
+            isSubpixelText = true
+            // Disable hinting for softer edges (more like ink)
+            hinting = Paint.HINTING_OFF
         }
 
-        // Seed from line + content for consistent but unique rendering
+        // Seed ensures consistent rendering for same content
         val seed = lineIndex * 7919 + text.hashCode()
+        
+        // Enable/disable mistakes based on focus: focused = slightly cleaner
+        handwritingPaint.enableMistakes = !isFocused || text.length > 3
+        
         handwritingPaint.drawHandwrittenText(
             canvas, text,
             paddingLeft.toFloat(),
@@ -160,6 +173,7 @@ class LineEditText @JvmOverloads constructor(
             color = NotebookColors.LineBlue
             strokeWidth = 2f
             alpha = 120
+            maskFilter = BlurMaskFilter(1f, BlurMaskFilter.Blur.NORMAL)
         }
         canvas.drawLine(
             paddingLeft.toFloat(),
@@ -177,15 +191,16 @@ class LineEditText @JvmOverloads constructor(
             paint.measureText(text) + paddingLeft
         }
 
-        val paint = Paint().apply {
+        val cursorPaint = Paint().apply {
             color = NotebookColors.InkBlue
-            strokeWidth = 2f
-            alpha = 180
+            strokeWidth = 2.5f
+            alpha = 160 + (System.currentTimeMillis() % 800 / 800f * 95).toInt()
+            maskFilter = BlurMaskFilter(0.5f, BlurMaskFilter.Blur.NORMAL)
         }
         canvas.drawLine(
             x, baseline - textSize * 0.75f,
             x, baseline + textSize * 0.2f,
-            paint
+            cursorPaint
         )
     }
 

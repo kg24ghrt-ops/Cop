@@ -1,46 +1,48 @@
 package com.pot.cil.hj.ui.view
 
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
+import android.graphics.*
 import android.text.TextPaint
+import kotlin.math.*
 import kotlin.random.Random
 
 /**
- * Renders text with realistic human handwriting including intentional mistakes.
+ * Ultra-realistic human handwriting renderer.
  * 
- * Human mistakes are stroke-level artifacts that apply to ANY writing system:
- * - Wobbly/uneven strokes (shaky hand)
- * - Ink pooling at stroke starts/ends
- * - Slight misalignment of stroke clusters
- * - Variable pressure (thick/thin strokes)
- * - Occasional skipped connections between strokes
- * - Micro-tremors in long strokes
- * - Slight rotation drift within a word
+ * Simulates physical ink on paper through multi-pass rendering:
+ * 1. Base stroke with variable pressure (pen angle simulation)
+ * 2. Ink bleed layer (feathering into paper fibers)
+ * 3. Edge noise (micro-irregularities from paper texture)
+ * 4. Ink pooling at stroke endpoints
+ * 5. Dry/wet variation (darker at starts, lighter at ends)
  * 
- * These are visual imperfections, not glyph mutations — works for Myanmar,
- * Arabic, Thai, Devanagari, Latin, CJK, emoji, everything.
+ * Works with any script: Latin, CJK, Arabic, Thai, Devanagari, Myanmar, emoji.
  */
 class HandwritingPaint {
     
     // ── Physical scale ─────────────────────────────────────────
     private val pxPerMm = 6.3f
     
-    // ── Mistake configuration (tune these for more/less messy) ─
+    // ── Mistake / realism configuration ───────────────────────
     var enableMistakes: Boolean = true
-    var shakiness: Float = 0.8f              // 0=perfect, 2=very shaky
-    var inkPoolChance: Float = 0.15f          // Chance of ink blob at stroke start
-    var pressureVariation: Float = 0.6f         // Thick/thin stroke variation
-    var rotationDrift: Float = 2.0f           // Degrees of rotation drift per word
-    var microTremor: Float = 0.4f             // Tiny wobble in strokes
-    var skipConnectionChance: Float = 0.08f     // Gap in cursive-like connection
-    var baselineWander: Float = 1.2f          // Baseline drifts up/down slightly
+    var shakiness: Float = 0.9f              // 0=perfect, 2=very shaky
+    var inkPoolChance: Float = 0.18f          // Chance of ink blob at stroke start
+    var pressureVariation: Float = 0.7f       // Thick/thin stroke variation
+    var rotationDrift: Float = 2.5f           // Degrees of rotation drift per word
+    var microTremor: Float = 0.5f             // Tiny wobble in strokes
+    var skipConnectionChance: Float = 0.06f   // Gap in cursive-like connection
+    var baselineWander: Float = 1.5f          // Baseline drifts up/down slightly
+    var inkFeathering: Float = 0.8f           // How much ink bleeds (0=none, 2=heavy)
+    var edgeRoughness: Float = 0.6f           // Paper texture interaction
+    var penAngle: Float = 45f                 // Degrees — ballpoint pen tilt
+    var velocityPressure: Boolean = true      // Faster = thinner strokes
+    
+    // Correlated baseline drift (simulates hand/arm movement)
+    private var baselineDriftAccumulator = 0f
+    private var lastDriftSeed = 0
     
     /**
      * Draw text with human handwriting mistakes.
-     * Operates on measured glyph runs so complex scripts stay intact.
+     * Multi-pass rendering for physical ink simulation.
      */
     fun drawHandwrittenText(
         canvas: Canvas,
@@ -55,33 +57,42 @@ class HandwritingPaint {
         val localRandom = Random(seed)
         val textString = text.toString()
         
-        // Break into words (space-separated) to apply per-word drift
+        // Reset correlated drift for new line
+        if (seed != lastDriftSeed) {
+            baselineDriftAccumulator = 0f
+            lastDriftSeed = seed
+        }
+        
+        // Break into words for per-word drift
         val words = textString.split(" ")
         var currentX = x
         var currentBaseline = y
         
         for ((wordIndex, word) in words.withIndex()) {
             val wordSeed = seed + wordIndex * 9973
+            val wordRandom = Random(wordSeed)
             
-            // Per-word baseline wander (human lines aren't perfectly straight)
-            currentBaseline += (localRandom.nextFloat() - 0.5f) * baselineWander * pxPerMm
+            // Correlated baseline wander (hand moves in smooth curves, not jumps)
+            val targetDrift = (wordRandom.nextFloat() - 0.5f) * baselineWander * pxPerMm
+            baselineDriftAccumulator += (targetDrift - baselineDriftAccumulator) * 0.3f
+            currentBaseline += baselineDriftAccumulator * 0.4f
             
             // Per-word rotation drift
-            val wordRotation = (localRandom.nextFloat() - 0.5f) * rotationDrift
+            val wordRotation = (wordRandom.nextFloat() - 0.5f) * rotationDrift
             
-            drawWordWithMistakes(
+            drawWordWithRealism(
                 canvas, word, currentX, currentBaseline,
                 paint, wordSeed, wordRotation, localRandom
             )
             
             // Advance with imperfect spacing
             val wordWidth = paint.measureText(word)
-            val spaceWidth = paint.measureText(" ") * (0.85f + localRandom.nextFloat() * 0.3f)
+            val spaceWidth = paint.measureText(" ") * (0.82f + localRandom.nextFloat() * 0.36f)
             currentX += wordWidth + spaceWidth
         }
     }
     
-    private fun drawWordWithMistakes(
+    private fun drawWordWithRealism(
         canvas: Canvas,
         word: String,
         x: Float,
@@ -96,9 +107,9 @@ class HandwritingPaint {
         
         var currentX = x
         val baseTextSize = basePaint.textSize
-        val baseStrokeWidth = basePaint.textSize * 0.05f
+        val baseStrokeWidth = basePaint.textSize * 0.055f
         
-        // Decide if this word gets an ink pool at the start
+        // Decide ink pool at word start
         val hasInkPool = enableMistakes && localRandom.nextFloat() < inkPoolChance
         
         // Apply word-level rotation
@@ -113,97 +124,323 @@ class HandwritingPaint {
             
             val clusterWidth = basePaint.measureText(cluster)
             
-            // ── Mistake 1: Baseline jitter per cluster ─────────────
+            // ── Physical mistakes per cluster ─────────────────────
             val jitterY = if (enableMistakes) {
-                (clusterRandom.nextFloat() - 0.5f) * shakiness * pxPerMm * 2
+                (clusterRandom.nextFloat() - 0.5f) * shakiness * pxPerMm * 2.5f
             } else 0f
             
-            // ── Mistake 2: Micro-tremor (tiny rapid wobble) ────────
             val tremorX = if (enableMistakes) {
-                (clusterRandom.nextFloat() - 0.5f) * microTremor * pxPerMm
+                (clusterRandom.nextFloat() - 0.5f) * microTremor * pxPerMm * 1.5f
             } else 0f
             
-            // ── Mistake 3: Variable pressure (thick/thin) ──────────
+            // Velocity-based pressure: wider clusters = faster = thinner
+            val velocityFactor = if (velocityPressure && enableMistakes) {
+                val normalizedWidth = (clusterWidth / baseTextSize).coerceIn(0.5f, 2f)
+                1f - (normalizedWidth - 0.5f) * 0.15f  // Wide = slightly thinner
+            } else 1f
+            
             val pressure = if (enableMistakes) {
-                0.5f + clusterRandom.nextFloat() * pressureVariation
+                (0.4f + clusterRandom.nextFloat() * pressureVariation) * velocityFactor
             } else 1f
             
-            // ── Mistake 4: Slight size variation per cluster ─────────
             val sizeMult = if (enableMistakes) {
-                1f + (clusterRandom.nextFloat() - 0.5f) * 0.06f
+                1f + (clusterRandom.nextFloat() - 0.5f) * 0.08f
             } else 1f
             
-            // ── Mistake 5: Occasional gap (skipped connection) ─────
             val skipGap = if (enableMistakes && clusterRandom.nextFloat() < skipConnectionChance) {
-                basePaint.textSize * 0.15f
+                basePaint.textSize * 0.12f
             } else 0f
             
-            // ── Mistake 6: Slight rotation per cluster ─────────────
             val clusterRotation = if (enableMistakes) {
-                (clusterRandom.nextFloat() - 0.5f) * 1.5f
+                (clusterRandom.nextFloat() - 0.5f) * 2.0f
             } else 0f
             
-            // Apply paint modifications
-            val textPaint = TextPaint(basePaint).apply {
-                textSize = baseTextSize * sizeMult
-                strokeWidth = baseStrokeWidth * pressure
-                // Vary alpha slightly for dry/wet ink look
-                alpha = (240 + clusterRandom.nextInt(15)).coerceIn(220, 255)
+            // ── Multi-pass ink rendering ──────────────────────────
+            val drawX = currentX + tremorX + skipGap
+            val drawY = y + jitterY
+            
+            // PASS 1: Ink bleed (feathering into paper)
+            if (inkFeathering > 0 && enableMistakes) {
+                drawInkBleedPass(canvas, cluster, drawX, drawY, basePaint, 
+                    baseTextSize * sizeMult, pressure, clusterRandom)
             }
             
-            // Draw ink pool at start of word (first cluster only)
+            // PASS 2: Main stroke with pen angle simulation
+            drawMainStroke(canvas, cluster, drawX, drawY, basePaint,
+                baseTextSize * sizeMult, pressure, penAngle, clusterRandom, clusterSeed)
+            
+            // PASS 3: Edge noise (paper texture interaction)
+            if (edgeRoughness > 0 && enableMistakes) {
+                drawEdgeNoisePass(canvas, cluster, drawX, drawY, basePaint,
+                    baseTextSize * sizeMult, pressure, clusterRandom)
+            }
+            
+            // PASS 4: Dry/wet variation overlay
+            if (enableMistakes) {
+                drawDryWetOverlay(canvas, cluster, drawX, drawY, basePaint,
+                    baseTextSize * sizeMult, pressure, clusterIndex, clusters.size, clusterRandom)
+            }
+            
+            // Ink pool at word start
             if (hasInkPool && clusterIndex == 0) {
-                drawInkPool(canvas, currentX + tremorX, y + jitterY, baseTextSize * 0.3f)
+                drawRealisticInkPool(canvas, drawX, drawY, baseTextSize * 0.25f, clusterRandom)
             }
             
-            // Draw the cluster with all mistakes applied
-            canvas.save()
-            canvas.translate(currentX + tremorX + skipGap, y + jitterY)
-            canvas.rotate(clusterRotation)
-            canvas.drawText(cluster, 0f, 0f, textPaint)
-            canvas.restore()
-            
-            // Draw shaky underline effect for some clusters (simulates hand tremor)
-            if (enableMistakes && clusterRandom.nextFloat() < 0.05f) {
-                drawShakyUnderline(canvas, currentX, y, clusterWidth, baseTextSize, clusterRandom)
+            // Occasional shaky underline (hand tremor)
+            if (enableMistakes && clusterRandom.nextFloat() < 0.04f) {
+                drawShakyUnderline(canvas, drawX, y, clusterWidth, baseTextSize, clusterRandom)
             }
             
-            currentX += clusterWidth + skipGap + baseTextSize * 0.08f
+            currentX += clusterWidth + skipGap + baseTextSize * 0.06f
         }
         
         canvas.restore()
         
-        // Draw occasional ink blob at end of word
-        if (enableMistakes && globalRandom.nextFloat() < inkPoolChance * 0.5f) {
-            drawInkPool(canvas, currentX - baseTextSize * 0.1f, y, baseTextSize * 0.15f)
+        // End-of-word ink blob
+        if (enableMistakes && globalRandom.nextFloat() < inkPoolChance * 0.4f) {
+            drawRealisticInkPool(canvas, currentX - baseTextSize * 0.08f, y, 
+                baseTextSize * 0.12f, globalRandom)
         }
     }
     
     /**
-     * Draw an ink pool/blob — excess ink that pools at pen stops.
-     * Universal: applies to any script at stroke endpoints.
+     * PASS 1: Ink bleed — soft feathering that simulates ink soaking into paper fibers.
+     * Draws the text multiple times with slight offsets and high blur.
      */
-    private fun drawInkPool(canvas: Canvas, x: Float, y: Float, radius: Float) {
-        val blobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#1A1A1A")
-            alpha = 180
-            style = Paint.Style.FILL
+    private fun drawInkBleedPass(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        basePaint: TextPaint,
+        textSize: Float,
+        pressure: Float,
+        random: Random
+    ) {
+        val bleedPaint = TextPaint(basePaint).apply {
+            this.textSize = textSize
+            color = basePaint.color
+            alpha = (40 * inkFeathering).toInt().coerceIn(15, 80)
+            // Soft edges for bleed
+            maskFilter = BlurMaskFilter(textSize * 0.04f * inkFeathering, BlurMaskFilter.Blur.NORMAL)
         }
         
-        // Irregular blob shape using multiple overlapping circles
-        val random = Random(x.toInt() + y.toInt())
-        val blobs = 3 + random.nextInt(3)
-        
-        for (i in 0 until blobs) {
-            val offsetX = (random.nextFloat() - 0.5f) * radius * 1.5f
-            val offsetY = (random.nextFloat() - 0.5f) * radius * 1.5f
-            val blobRadius = radius * (0.4f + random.nextFloat() * 0.6f)
-            canvas.drawCircle(x + offsetX, y + offsetY, blobRadius, blobPaint)
+        // Multiple offset passes for organic spread
+        val passes = 2 + random.nextInt(2)
+        for (i in 0 until passes) {
+            val offsetX = (random.nextFloat() - 0.5f) * textSize * 0.03f * inkFeathering
+            val offsetY = (random.nextFloat() - 0.5f) * textSize * 0.03f * inkFeathering
+            val scale = 1f + (random.nextFloat() - 0.5f) * 0.02f
+            
+            canvas.save()
+            canvas.translate(x + offsetX, y + offsetY)
+            canvas.scale(scale, scale)
+            canvas.drawText(text, 0f, 0f, bleedPaint)
+            canvas.restore()
         }
     }
     
     /**
-     * Draw a shaky underline — simulates hand tremor or hesitation.
+     * PASS 2: Main stroke with pen angle simulation.
+     * Draws the text 2-3 times with slight perpendicular offsets to simulate
+     * a ballpoint pen's elliptical contact patch.
+     */
+    private fun drawMainStroke(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        basePaint: TextPaint,
+        textSize: Float,
+        pressure: Float,
+        angle: Float,
+        random: Random,
+        seed: Int
+    ) {
+        val rad = Math.toRadians(angle.toDouble())
+        val cosA = cos(rad).toFloat()
+        val sinA = sin(rad).toFloat()
+        
+        // Pen contact patch offset (asymmetric stroke)
+        val penOffset = textSize * 0.012f
+        
+        // Main paint with variable stroke
+        val mainPaint = TextPaint(basePaint).apply {
+            this.textSize = textSize
+            strokeWidth = basePaint.textSize * 0.05f * pressure
+            style = Paint.Style.FILL_AND_STROKE
+            // Slightly darker for wet ink look
+            alpha = (235 + random.nextInt(20)).coerceIn(230, 255)
+        }
+        
+        // Draw primary stroke
+        canvas.save()
+        canvas.translate(x, y)
+        canvas.drawText(text, 0f, 0f, mainPaint)
+        canvas.restore()
+        
+        // Draw secondary offset stroke for pen angle (thicker on one side)
+        if (pressure > 0.6f) {
+            val secondaryPaint = TextPaint(mainPaint).apply {
+                alpha = (mainPaint.alpha * 0.4f).toInt()
+                strokeWidth = mainPaint.strokeWidth * 0.5f
+            }
+            canvas.save()
+            canvas.translate(x + penOffset * cosA, y + penOffset * sinA)
+            canvas.drawText(text, 0f, 0f, secondaryPaint)
+            canvas.restore()
+        }
+        
+        // Micro-tremor: tiny rapid wobble for hand unsteadiness
+        if (microTremor > 0 && enableMistakes) {
+            val tremorPaint = TextPaint(mainPaint).apply {
+                alpha = (mainPaint.alpha * 0.25f).toInt()
+            }
+            val tremorX = (random.nextFloat() - 0.5f) * microTremor * pxPerMm * 0.5f
+            val tremorY = (random.nextFloat() - 0.5f) * microTremor * pxPerMm * 0.5f
+            canvas.save()
+            canvas.translate(x + tremorX, y + tremorY)
+            canvas.drawText(text, 0f, 0f, tremorPaint)
+            canvas.restore()
+        }
+    }
+    
+    /**
+     * PASS 3: Edge noise — simulates paper tooth catching ink unevenly.
+     * Adds tiny irregular dots and lines along the text edges.
+     */
+    private fun drawEdgeNoisePass(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        basePaint: TextPaint,
+        textSize: Float,
+        pressure: Float,
+        random: Random
+    ) ) {
+        // Get text bounds for edge sampling
+        val bounds = Rect()
+        val measurePaint = TextPaint(basePaint).apply { this.textSize = textSize }
+        measurePaint.getTextBounds(text, 0, text.length, bounds)
+        
+        val noisePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = basePaint.color
+            alpha = (60 * edgeRoughness * pressure).toInt().coerceIn(20, 120)
+            strokeWidth = textSize * 0.015f
+            style = Paint.Style.STROKE
+        }
+        
+        // Add noise dots along the text baseline area
+        val width = measurePaint.measureText(text)
+        val noiseCount = (width / textSize * 8 * edgeRoughness).toInt()
+        
+        for (i in 0 until noiseCount) {
+            val nx = x + random.nextFloat() * width
+            val ny = y + (random.nextFloat() - 0.3f) * textSize * 0.6f
+            val radius = textSize * 0.008f * (0.5f + random.nextFloat())
+            
+            if (random.nextFloat() < 0.3f) {
+                // Small dot
+                canvas.drawCircle(nx, ny, radius, noisePaint.apply { style = Paint.Style.FILL })
+            } else {
+                // Tiny line
+                val len = textSize * 0.02f * random.nextFloat()
+                val angle = random.nextFloat() * 2f * PI.toFloat()
+                canvas.drawLine(
+                    nx, ny,
+                    nx + cos(angle) * len, ny + sin(angle) * len,
+                    noisePaint
+                )
+            }
+        }
+    }
+    
+    /**
+     * PASS 4: Dry/wet overlay — ink dries darker at the start of a stroke
+     * and slightly lighter toward the end. Also adds occasional "dry spot"
+     * where the pen skipped.
+     */
+    private fun drawDryWetOverlay(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        basePaint: TextPaint,
+        textSize: Float,
+        pressure: Float,
+        clusterIndex: Int,
+        totalClusters: Int,
+        random: Random
+    ) {
+        // Wet ink at start (darker, more saturated)
+        if (clusterIndex == 0 && random.nextFloat() < 0.6f) {
+            val wetPaint = TextPaint(basePaint).apply {
+                this.textSize = textSize
+                alpha = (30 * pressure).toInt()
+                color = Color.BLACK  // Extra dark for wet ink
+                maskFilter = BlurMaskFilter(textSize * 0.02f, BlurMaskFilter.Blur.NORMAL)
+            }
+            canvas.save()
+            canvas.translate(x, y)
+            canvas.drawText(text, 0f, 0f, wetPaint)
+            canvas.restore()
+        }
+        
+        // Dry spot (occasional lighter patch simulating skipped ink)
+        if (random.nextFloat() < 0.08f) {
+            val dryWidth = textSize * (0.1f + random.nextFloat() * 0.3f)
+            val dryX = x + random.nextFloat() * (basePaint.measureText(text) - dryWidth)
+            val dryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = NotebookColors.PaperBackground  // Matches paper
+                alpha = (100 + random.nextInt(80))
+                maskFilter = BlurMaskFilter(textSize * 0.03f, BlurMaskFilter.Blur.NORMAL)
+            }
+            canvas.drawRect(dryX, y - textSize * 0.6f, dryX + dryWidth, y + textSize * 0.2f, dryPaint)
+        }
+    }
+    
+    /**
+     * Realistic ink pool — irregular, organic blob with multiple overlapping
+     * circles of varying opacity and size.
+     */
+    private fun drawRealisticInkPool(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        radius: Float,
+        random: Random
+    ) {
+        // Base dark pool
+        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0D0D0D")
+            alpha = 200
+            style = Paint.Style.FILL
+            maskFilter = BlurMaskFilter(radius * 0.5f, BlurMaskFilter.Blur.NORMAL)
+        }
+        
+        // Multiple irregular blobs
+        val blobCount = 4 + random.nextInt(4)
+        for (i in 0 until blobCount) {
+            val angle = random.nextFloat() * 2f * PI.toFloat()
+            val distance = random.nextFloat() * radius * 0.8f
+            val bx = x + cos(angle) * distance
+            val by = y + sin(angle) * distance * 0.7f  // Slightly flattened
+            val br = radius * (0.3f + random.nextFloat() * 0.7f)
+            val alpha = (150 + random.nextInt(80)).coerceIn(120, 255)
+            
+            canvas.drawCircle(bx, by, br, basePaint.apply { this.alpha = alpha })
+        }
+        
+        // Dark center
+        canvas.drawCircle(x, y, radius * 0.4f, basePaint.apply { 
+            alpha = 240 
+            maskFilter = BlurMaskFilter(radius * 0.2f, BlurMaskFilter.Blur.NORMAL)
+        })
+    }
+    
+    /**
+     * Shaky underline — simulates hand tremor or hesitation mark.
      */
     private fun drawShakyUnderline(
         canvas: Canvas,
@@ -216,70 +453,32 @@ class HandwritingPaint {
         val path = Path()
         val startX = x
         val endX = x + width
-        val baseY = y + textSize * 0.15f
+        val baseY = y + textSize * 0.18f
         
         path.moveTo(startX, baseY)
         
         var currentX = startX
         while (currentX < endX) {
-            val step = 2f + random.nextFloat() * 3f
+            val step = 1.5f + random.nextFloat() * 2.5f
             currentX = (currentX + step).coerceAtMost(endX)
-            val wobbleY = baseY + (random.nextFloat() - 0.5f) * textSize * 0.08f
+            val wobbleY = baseY + (random.nextFloat() - 0.5f) * textSize * 0.1f
             path.lineTo(currentX, wobbleY)
         }
         
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#2A2A2A")
-            strokeWidth = textSize * 0.03f
+            color = Color.parseColor("#252525")
+            strokeWidth = textSize * 0.025f
             style = Paint.Style.STROKE
-            alpha = 120
+            alpha = 100
+            maskFilter = BlurMaskFilter(textSize * 0.01f, BlurMaskFilter.Blur.NORMAL)
         }
         
         canvas.drawPath(path, paint)
     }
     
     /**
-     * Draw a stroke with visible wobble — simulates unsteady hand movement.
-     * Applied to the entire text path for major shakiness.
-     */
-    fun drawShakyStroke(
-        canvas: Canvas,
-        path: Path,
-        paint: Paint,
-        amplitude: Float = 1.5f
-    ) {
-        // Sample the path and redraw with noise
-        val pathMeasure = android.graphics.PathMeasure(path, false)
-        val length = pathMeasure.length
-        val step = 2f
-        
-        val wobblyPath = Path()
-        val pos = FloatArray(2)
-        val first = true
-        
-        var distance = 0f
-        val random = Random(length.toInt())
-        
-        while (distance <= length) {
-            pathMeasure.getPosTan(distance, pos, null)
-            val wobbleX = pos[0] + (random.nextFloat() - 0.5f) * amplitude
-            val wobbleY = pos[1] + (random.nextFloat() - 0.5f) * amplitude
-            
-            if (first) {
-                wobblyPath.moveTo(wobbleX, wobbleY)
-            } else {
-                wobblyPath.lineTo(wobbleX, wobbleY)
-            }
-            
-            distance += step
-        }
-        
-        canvas.drawPath(wobblyPath, paint)
-    }
-    
-    /**
      * Extract grapheme clusters — user-perceived characters.
-     * Handles Myanmar, Arabic, Thai, Devanagari, Hangul, emoji, etc.
+     * Handles all Unicode scripts including complex shaping.
      */
     private fun extractGraphemeClusters(text: String): List<String> {
         val clusters = mutableListOf<String>()
@@ -290,7 +489,7 @@ class HandwritingPaint {
             val codePoint = text.codePointAt(i)
             i += Character.charCount(codePoint)
             
-            // Absorb combining characters
+            // Absorb combining marks
             while (i < text.length && isCombining(text.codePointAt(i))) {
                 i += Character.charCount(text.codePointAt(i))
             }
@@ -311,12 +510,26 @@ class HandwritingPaint {
                 }
             }
             
-            // ZWJ sequences
+            // ZWJ/ZWNJ sequences (emoji, Arabic shaping, etc.)
             while (i < text.length && isJoiner(text.codePointAt(i))) {
                 i += Character.charCount(text.codePointAt(i))
-                if (i < text.length) {
+                if (i < text.length && !isJoiner(text.codePointAt(i))) {
                     i += Character.charCount(text.codePointAt(i))
                 }
+            }
+            
+            // Emoji variation selectors and tag sequences
+            while (i < text.length && isVariationSelector(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            if (i < text.length && text.codePointAt(i) == 0xE007F) {  // Cancel tag
+                i += Character.charCount(text.codePointAt(i))
+            }
+            
+            // Regional indicators (flag emoji)
+            if (i < text.length && isRegionalIndicator(codePoint) && 
+                i < text.length && isRegionalIndicator(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
             }
             
             clusters.add(text.substring(start, i))
@@ -354,8 +567,8 @@ class HandwritingPaint {
         cp in 0x0CBE..0x0CCC -> true
         cp in 0x0D3E..0x0D4C -> true
         cp in 0x17B6..0x17D3 -> true
-        cp in 0x1161..0x1175 -> true
-        cp in 0x11A8..0x11C2 -> true
+        cp in 0x1161..0x1175 -> true  // Hangul jungseong
+        cp in 0x11A8..0x11C2 -> true  // Hangul jongseong
         cp in 0xFE00..0xFE0F -> true
         cp in 0xE0100..0xE01EF -> true
         else -> false
@@ -364,4 +577,6 @@ class HandwritingPaint {
     private fun isMyanmarMedial(cp: Int) = cp in 0x103B..0x103E
     private fun isMyanmarConsonant(cp: Int) = cp in 0x1000..0x102A
     private fun isJoiner(cp: Int) = cp == 0x200D || cp == 0x200C
+    private fun isVariationSelector(cp: Int) = cp in 0xFE00..0xFE0F || cp in 0xE0100..0xE01EF
+    private fun isRegionalIndicator(cp: Int) = cp in 0x1F1E6..0x1F1FF
 }

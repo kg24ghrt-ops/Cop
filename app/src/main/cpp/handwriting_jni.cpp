@@ -31,12 +31,9 @@ Java_com_pot_cil_hj_ui_view_HandwritingPaint_00024Companion_nativeApplyEffects(
     HandwritingOptions nativeOpts;
     nativeOpts.ink_feathering    = getFloatField("inkFeathering");
     nativeOpts.edge_roughness    = getFloatField("edgeRoughness");
-    nativeOpts.micro_tremor      = 0.0f;   // not yet used
-    nativeOpts.shakiness         = 0.0f;
-    nativeOpts.ink_pool_chance   = 0.0f;
     nativeOpts.enable_mistakes   = getBooleanField("enableMistakes");
     nativeOpts.performance_mode  = getBooleanField("performanceMode");
-    nativeOpts.seed              = 0;
+    nativeOpts.seed              = 0;   // not used in current passes
 
     env->DeleteLocalRef(optionsClass);
 

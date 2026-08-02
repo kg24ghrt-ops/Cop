@@ -18,8 +18,8 @@ android {
         externalNativeBuild {
             cmake {
                 arguments(
-                    "-DANDROID_STL=c++_static",
-                    "-DANDROID_ARM_NEON=TRUE" // Force ARM NEON SIMD vectorization
+                    "-DANDROID_STL=c++_static"
+                    // -DANDROID_ARM_NEON=TRUE removed to prevent '-mfpu=neon' errors on arm64-v8a
                 )
                 // Restrict ABIs to modern 64-bit & common 32-bit targets
                 abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64"))

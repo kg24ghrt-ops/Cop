@@ -7,21 +7,28 @@ android {
     namespace = "com.pot.cil.hj"
     compileSdk = 35
 
+    // 👇 REQUIRED: pin the exact NDK version so all developers & CI use the same one
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "com.pot.cil.hj"
-        minSdk = 29 // Upgraded to Android 10 baseline for modern NDK & Hardware Buffer zero-copy support
+        minSdk = 29
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
-        // NDK configuration for C++ Engine
+        // 👇 REQUIRED: only package ABIs we actually build (keep APK size small)
+        ndk {
+            abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+        }
+
+        // NDK configuration for C++ engine
         externalNativeBuild {
             cmake {
                 arguments(
                     "-DANDROID_STL=c++_static"
-                    // -DANDROID_ARM_NEON=TRUE removed to prevent '-mfpu=neon' errors on arm64-v8a
                 )
-                // Restrict ABIs to modern 64-bit & common 32-bit targets
+                // Restrict build ABIs (must match ndk.abiFilters above)
                 abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64"))
             }
         }
@@ -49,7 +56,6 @@ android {
             )
             externalNativeBuild {
                 cmake {
-                    // Pass Release build flag down to CMake for -O3 and -flto Clang optimizations
                     arguments("-DCMAKE_BUILD_TYPE=Release")
                 }
             }

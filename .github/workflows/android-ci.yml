@@ -26,6 +26,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # ── Install NDK & CMake (matching build.gradle.kts) ──────────
+      - name: Install Android SDK components (NDK + CMake)
+        run: |
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
@@ -34,6 +41,11 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug
+
+      # ── Verify the native library is inside the APK (optional) ──
+      - name: Check for native library in APK
+        run: |
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libhandwriting_engine.so || echo "WARNING: Native library not found in APK!"
 
       - name: Upload debug APK as artifact
         uses: actions/upload-artifact@v4
@@ -58,12 +70,17 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # ── Install NDK & CMake (needed for release build as well) ──
+      - name: Install Android SDK components (NDK + CMake)
+        run: |
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # ============================================================
-      # AUTO-GENERATE A DEBUG KEYSTORE (fixed -keyalg RSA)
-      # ============================================================
+      # ── Auto‑generate a debug keystore for signing ────────────────
       - name: Generate debug keystore
         run: |
           mkdir -p ~/.android
@@ -73,9 +90,7 @@ jobs:
             -validity 10000 -keyalg RSA
           echo "DEBUG_KEYSTORE_PATH=~/.android/debug.keystore" >> $GITHUB_ENV
 
-      # ============================================================
-      # BUILD RELEASE APK SIGNED WITH THE AUTO-GENERATED DEBUG KEYSTORE
-      # ============================================================
+      # ── Build signed release APK ──────────────────────────────────
       - name: Build signed release APK
         run: ./gradlew assembleRelease
         env:
@@ -84,14 +99,17 @@ jobs:
           KEY_ALIAS: androiddebugkey
           KEY_PASSWORD: android
 
-      # ============================================================
-      # UPLOAD TO GOOGLE PLAY INTERNAL APP SHARING (APP CHANCE)
-      # ============================================================
+      # ── Verify native library presence in release APK ────────────
+      - name: Check for native library in release APK
+        run: |
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep libhandwriting_engine.so || echo "WARNING: Native library not found in release APK!"
+
+      # ── Upload to Google Play Internal App Sharing ────────────────
       - name: Upload to Google Play Internal App Sharing
         uses: r0adkll/upload-google-play@v1.1.5
         with:
           serviceAccountJson: ${{ secrets.SERVICE_ACCOUNT_JSON }}
-          packageName: your.gni.app.package.name
+          packageName: your.gni.app.package.name   # ⚠️ replace with your real package name
           releaseFiles: app/build/outputs/apk/release/*.apk
           track: internal
           whatsNew: "Auto-built from main branch - Internal sharing"

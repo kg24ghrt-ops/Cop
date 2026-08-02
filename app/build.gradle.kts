@@ -9,10 +9,30 @@ android {
 
     defaultConfig {
         applicationId = "com.pot.cil.hj"
-        minSdk = 24
+        minSdk = 29 // Upgraded to Android 10 baseline for modern NDK & Hardware Buffer zero-copy support
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // NDK configuration for C++ Engine
+        externalNativeBuild {
+            cmake {
+                arguments(
+                    "-DANDROID_STL=c++_static",
+                    "-DANDROID_ARM_NEON=TRUE" // Force ARM NEON SIMD vectorization
+                )
+                // Restrict ABIs to modern 64-bit & common 32-bit targets
+                abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+            }
+        }
+    }
+
+    // Link CMake build file for native C++ compilation
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildFeatures {
@@ -21,17 +41,33 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            externalNativeBuild {
+                cmake {
+                    // Pass Release build flag down to CMake for -O3 and -flto Clang optimizations
+                    arguments("-DCMAKE_BUILD_TYPE=Release")
+                }
+            }
+        }
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments("-DCMAKE_BUILD_TYPE=Debug")
+                }
+            }
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }

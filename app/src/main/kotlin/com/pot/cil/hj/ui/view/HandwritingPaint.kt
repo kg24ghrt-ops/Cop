@@ -341,12 +341,68 @@ class HandwritingPaint {
         }
     }
 
-    // ── Grapheme cluster extraction (unchanged) ────────────────
+    // ── Grapheme cluster extraction (robust Unicode handling) ──
     private fun extractGraphemeClusters(text: String): List<String> {
-        // … (identical to previous implementation, omitted for brevity)
-        // Ensure full Unicode support as in the original.
+        val clusters = mutableListOf<String>()
+        var i = 0
+        while (i < text.length) {
+            val start = i
+            val codePoint = text.codePointAt(i)
+            i += Character.charCount(codePoint)
+
+            while (i < text.length && isCombining(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            while (i < text.length && isMyanmarMedial(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            if (i < text.length && text.codePointAt(i) == 0x103A) {
+                i += Character.charCount(text.codePointAt(i))
+                while (i < text.length && isMyanmarConsonant(text.codePointAt(i))) {
+                    i += Character.charCount(text.codePointAt(i))
+                    while (i < text.length && isMyanmarMedial(text.codePointAt(i))) {
+                        i += Character.charCount(text.codePointAt(i))
+                    }
+                }
+            }
+            while (i < text.length && isJoiner(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+                if (i < text.length && !isJoiner(text.codePointAt(i))) {
+                    i += Character.charCount(text.codePointAt(i))
+                }
+            }
+            while (i < text.length && isVariationSelector(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            if (i < text.length && text.codePointAt(i) == 0xE007F) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            if (i < text.length && isRegionalIndicator(codePoint) &&
+                isRegionalIndicator(text.codePointAt(i))) {
+                i += Character.charCount(text.codePointAt(i))
+            }
+            clusters.add(text.substring(start, i))
+        }
+        return clusters
     }
 
-    // Helper methods for Unicode categories – same as before.
-    // ...
+    // Helper Unicode functions
+    private fun isCombining(cp: Int): Boolean =
+        Character.getType(cp) == Character.NON_SPACING_MARK.toInt() ||
+        Character.getType(cp) == Character.ENCLOSING_MARK.toInt() ||
+        Character.getType(cp) == Character.COMBINING_SPACING_MARK.toInt()
+
+    private fun isMyanmarMedial(cp: Int): Boolean =
+        cp in setOf(0x103B, 0x103C, 0x103D, 0x103E, 0x105E, 0x105F, 0x1060, 0x1061, 0x1062, 0x1063, 0x1064)
+
+    private fun isMyanmarConsonant(cp: Int): Boolean =
+        cp in 0x1000..0x1021 || cp == 0x103F || cp in 0x104E..0x1055
+
+    private fun isJoiner(cp: Int): Boolean = cp == 0x200D || cp == 0x200C
+
+    private fun isVariationSelector(cp: Int): Boolean =
+        cp in 0xFE00..0xFE0F || cp in 0xE0100..0xE01EF
+
+    private fun isRegionalIndicator(cp: Int): Boolean =
+        cp in 0x1F1E6..0x1F1FF
 }

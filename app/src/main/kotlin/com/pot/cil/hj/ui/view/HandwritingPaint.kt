@@ -8,6 +8,15 @@ import java.util.concurrent.*
 import kotlin.math.*
 import kotlin.random.Random
 
+/**
+ * HandwritingPaint – hybrid Kotlin / C++ handwriting renderer.
+ *
+ * - Text measurement & cluster extraction: Android (perfect Unicode support)
+ * - Cluster‑level positioning & variation:   native C++ shaper
+ * - Pixel‑level ink effects:                 native C++ engine
+ *
+ * All public APIs remain unchanged.
+ */
 class HandwritingPaint {
 
     // ── Physical scale ─────────────────────────────────────────
@@ -48,8 +57,7 @@ class HandwritingPaint {
     private var baselineDriftAccumulator = 0f
     private var lastDriftSeed = 0
 
-    // ── Native interface ───────────────────────────────────────
-    // Dynamically registered – no name mangling, safe with R8
+    // ── Native methods (dynamic registration via JNI_OnLoad) ───
     private external fun nativeApplyEffects(
         pixels: ByteBuffer,
         width: Int,
@@ -61,6 +69,21 @@ class HandwritingPaint {
         performanceMode: Boolean
     )
 
+    private external fun computeShaping(
+        clusterStrings: Array<String>,
+        clusterWidths: FloatArray,
+        clusterCount: Int,
+        baseTextSize: Float,
+        shakiness: Float,
+        microTremor: Float,
+        pressureVariation: Float,
+        sizeVariation: Float,
+        skipChance: Float,
+        skipWidth: Float,
+        velocityPressure: Boolean,
+        seed: Int
+    ): FloatArray
+
     companion object {
         init {
             try {
@@ -71,20 +94,13 @@ class HandwritingPaint {
         }
     }
 
-    // ── Thread pool ────────────────────────────────────────────
+    // ── Thread pool for parallel word rendering ────────────────
     private val renderExecutor: ExecutorService = Executors.newFixedThreadPool(
         Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
     )
 
     fun shutdown() {
         renderExecutor.shutdown()
-    }
-
-    // ── Simple 2D noise (pure function) ────────────────────────
-    private fun noise2D(x: Float, y: Float, seed: Int): Float {
-        val n = (x * 57f + y * 73f).toInt() xor seed
-        val h = n * 0x9E3779B9.toInt()
-        return (h shr 13).toFloat() / 32767f
     }
 
     /**
@@ -192,14 +208,23 @@ class HandwritingPaint {
             wordCanvas.skew(-shear, 0f)
         }
 
-        drawClustersOnCanvas(wordCanvas, word, localPaint, localMeasurePaint, wordSeed, baseTextSize)
+        // Use the native shaper to draw clusters
+        drawWordWithNativeShaping(
+            canvas = wordCanvas,
+            word = word,
+            paint = localPaint,
+            measurePaint = localMeasurePaint,
+            wordSeed = wordSeed,
+            baseTextSize = baseTextSize
+        )
+
         wordCanvas.restore()
 
+        // Apply pixel‑level ink effects
         val buffer = ByteBuffer.allocateDirect(bitmapWidth * bitmapHeight * 4)
         bitmap.copyPixelsToBuffer(buffer)
         buffer.rewind()
 
-        // ── Safe native call ─────────────────────────────────────
         try {
             nativeApplyEffects(
                 buffer, bitmapWidth, bitmapHeight, bitmapWidth,
@@ -216,7 +241,11 @@ class HandwritingPaint {
         return bitmap
     }
 
-    private fun drawClustersOnCanvas(
+    /**
+     * Uses the native shaping engine to compute cluster positions,
+     * then draws each cluster directly to the canvas.
+     */
+    private fun drawWordWithNativeShaping(
         canvas: Canvas,
         word: String,
         paint: TextPaint,
@@ -224,50 +253,64 @@ class HandwritingPaint {
         wordSeed: Int,
         baseTextSize: Float
     ) {
-        val clusters = extractGraphemeClusters(word)
+        val clusters = extractGraphemeClusters(word).toTypedArray()
+        if (clusters.isEmpty()) return
+
+        val widths = FloatArray(clusters.size)
+        for (i in clusters.indices) {
+            widths[i] = measurePaint.measureText(clusters[i])
+        }
+
+        // Call native shaping engine
+        val transforms = try {
+            computeShaping(
+                clusters, widths, clusters.size, baseTextSize,
+                shakiness, microTremor, pressureVariation,
+                0.025f,   // sizeVariation (from original logic)
+                skipConnectionChance, baseTextSize * 0.1f,
+                velocityPressure, wordSeed
+            )
+        } catch (e: UnsatisfiedLinkError) {
+            // Fallback: use identity transforms
+            FloatArray(clusters.size * 4) { i ->
+                when (i % 4) {
+                    0 -> 0f   // offsetX
+                    1 -> 0f   // offsetY
+                    2 -> 1f   // sizeScale
+                    else -> 255f // alpha
+                }
+            }
+        }
+
         var currentX = 0f
+        for (i in clusters.indices) {
+            val idx = i * 4
+            val offsetX = transforms[idx]
+            val offsetY = transforms[idx + 1]
+            val scale = transforms[idx + 2]
+            val alpha = transforms[idx + 3].toInt().coerceIn(0, 255)
 
-        for ((clusterIndex, cluster) in clusters.withIndex()) {
-            val clusterSeed = wordSeed + clusterIndex * 7919
-            val clusterRandom = Random(clusterSeed)
-
-            val n1 = noise2D(currentX * 0.3f, 0f, wordSeed)
-            val n2 = noise2D(currentX * 0.7f, 5f, wordSeed)
-
-            val jitterY = if (enableMistakes) n1 * shakiness * pxPerMm * 2f else 0f
-            val tremorX = if (enableMistakes) n2 * microTremor * pxPerMm * 0.7f else 0f
-
-            measurePaint.textSize = baseTextSize
-            val clusterWidth = measurePaint.measureText(cluster)
-
-            val velocityFactor = if (velocityPressure && enableMistakes) {
-                val normWidth = (clusterWidth / baseTextSize).coerceIn(0.5f, 2f)
-                1f - (normWidth - 0.5f) * 0.12f
-            } else 1f
-
-            val progress = clusterIndex.toFloat() / clusters.size
-            val pressureCurve = 1f - 0.2f * progress
-            val pressure = if (enableMistakes) (0.5f + (n1 * 0.5f + 0.5f) * pressureVariation) * velocityFactor * pressureCurve else 1f
-            val sizeMult = if (enableMistakes) 1f + n2 * 0.025f else 1f
-            val skipGap = if (enableMistakes && clusterRandom.nextFloat() < skipConnectionChance) baseTextSize * 0.1f else 0f
-
-            val drawX = currentX + tremorX
-            val drawY = jitterY
-
-            paint.textSize = baseTextSize * sizeMult
-            paint.alpha = (240 + clusterRandom.nextInt(15)).coerceIn(230, 255)
+            paint.textSize = baseTextSize * scale
+            paint.alpha = alpha
             paint.style = Paint.Style.FILL
 
             canvas.save()
-            canvas.translate(drawX, drawY)
-            canvas.drawText(cluster, 0f, 0f, paint)
+            canvas.translate(currentX + offsetX, offsetY)
+            canvas.drawText(clusters[i], 0f, 0f, paint)
             canvas.restore()
 
-            currentX += clusterWidth + skipGap + baseTextSize * 0.02f
+            // Advance cursor – skip gap handled by native shaper?
+            // (Native module currently doesn't output gap info, so we use local random)
+            currentX += widths[i]
+            val clusterRandom = Random(wordSeed + i * 7919)
+            if (enableMistakes && clusterRandom.nextFloat() < skipConnectionChance) {
+                currentX += baseTextSize * 0.1f
+            }
+            currentX += baseTextSize * 0.02f   // default spacing
         }
     }
 
-    // ── Grapheme cluster extraction ────────────────────────────
+    // ── Grapheme cluster extraction (unchanged) ────────────────
     private fun extractGraphemeClusters(text: String): List<String> {
         val clusters = mutableListOf<String>()
         var i = 0

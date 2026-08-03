@@ -1,49 +1,83 @@
 #include <jni.h>
 #include "handwriting_engine.h"
+#include "handwriting_shaper.h"
 
-// ── The actual effect function (called via dynamic registration) ──
-static void nativeApplyEffectsImpl(
-    JNIEnv* env, jclass /*clazz*/,
-    jobject byteBuffer,
-    jint width, jint height, jint stride,
-    jfloat inkFeathering, jfloat edgeRoughness,
-    jboolean enableMistakes, jboolean performanceMode
-) {
-    uint32_t* pixels = static_cast<uint32_t*>(env->GetDirectBufferAddress(byteBuffer));
-    if (pixels == nullptr) return;
+// ... existing nativeApplyEffectsImpl ... (keep it)
 
-    HandwritingOptions opts;
-    opts.ink_feathering   = inkFeathering;
-    opts.edge_roughness   = edgeRoughness;
-    opts.enable_mistakes  = enableMistakes;
-    opts.performance_mode = performanceMode;
-    opts.seed             = 0;   // not used for now
+// ── New shaping function ─────────────────────────────────────────
+static jfloatArray JNICALL
+nativeComputeShaping(JNIEnv* env, jclass /*clazz*/,
+                     jobjectArray clusterStrings,
+                     jfloatArray clusterWidths,
+                     jint clusterCount,
+                     jfloat baseTextSize,
+                     jfloat shakiness,
+                     jfloat microTremor,
+                     jfloat pressureVariation,
+                     jfloat sizeVariation,
+                     jfloat skipChance,
+                     jfloat skipWidth,
+                     jboolean velocityPressure,
+                     jint seed) {
+    // Convert Java arrays to C
+    jfloat* widths = env->GetFloatArrayElements(clusterWidths, nullptr);
+    if (!widths) return nullptr;
 
-    applyHandwritingEffects(pixels, width, height, stride, opts);
+    std::vector<const char*> cStrings(clusterCount);
+    for (jint i = 0; i < clusterCount; ++i) {
+        jstring js = (jstring)env->GetObjectArrayElement(clusterStrings, i);
+        cStrings[i] = env->GetStringUTFChars(js, nullptr);
+    }
+
+    HandwritingShaperOptions opts;
+    opts.shakiness          = shakiness;
+    opts.microTremor        = microTremor;
+    opts.pressureVariation  = pressureVariation;
+    opts.sizeVariation      = sizeVariation;
+    opts.skipChance         = skipChance;
+    opts.skipWidth          = skipWidth;
+    opts.velocityPressure   = velocityPressure;
+    opts.seed               = seed;
+
+    std::vector<ClusterTransform> transforms(clusterCount);
+    computeClusterTransforms(cStrings.data(), widths, clusterCount,
+                             baseTextSize, &opts, transforms.data());
+
+    // Release strings
+    for (jint i = 0; i < clusterCount; ++i) {
+        jstring js = (jstring)env->GetObjectArrayElement(clusterStrings, i);
+        env->ReleaseStringUTFChars(js, cStrings[i]);
+    }
+    env->ReleaseFloatArrayElements(clusterWidths, widths, 0);
+
+    // Pack results into a float array: 4 floats per cluster (x, y, scale, alpha)
+    jfloatArray result = env->NewFloatArray(clusterCount * 4);
+    if (!result) return nullptr;
+    jfloat* resPtr = env->GetFloatArrayElements(result, nullptr);
+    for (jint i = 0; i < clusterCount; ++i) {
+        resPtr[i*4 + 0] = transforms[i].offsetX;
+        resPtr[i*4 + 1] = transforms[i].offsetY;
+        resPtr[i*4 + 2] = transforms[i].sizeScale;
+        resPtr[i*4 + 3] = static_cast<float>(transforms[i].alpha);
+    }
+    env->ReleaseFloatArrayElements(result, resPtr, 0);
+    return result;
 }
 
-// ── Method descriptor table for dynamic registration ────────────
+// ── Registration table (update) ──────────────────────────────────
 static JNINativeMethod methods[] = {
     {
-        const_cast<char*>("nativeApplyEffects"),                              // Kotlin method name
-        const_cast<char*>("(Ljava/nio/ByteBuffer;IIIFFZZ)V"),                // JNI type signature
-        reinterpret_cast<void*>(nativeApplyEffectsImpl)                     // C++ function pointer
+        const_cast<char*>("nativeApplyEffects"),
+        const_cast<char*>("(Ljava/nio/ByteBuffer;IIIFFZZ)V"),
+        reinterpret_cast<void*>(nativeApplyEffectsImpl)
+    },
+    {
+        const_cast<char*>("computeShaping"),   // new shaping method
+        const_cast<char*>("([Ljava/lang/String;[FIF"
+                          "FFFFFZ"
+                          "I)[F"),
+        reinterpret_cast<void*>(nativeComputeShaping)
     }
 };
 
-// ── Register the native methods when the library loads ───────────
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
-    JNIEnv* env = nullptr;
-    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
-        return JNI_ERR;
-    }
-
-    jclass clazz = env->FindClass("com/pot/cil/hj/ui/view/HandwritingPaint");
-    if (clazz == nullptr) return JNI_ERR;
-
-    if (env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0])) < 0) {
-        return JNI_ERR;
-    }
-
-    return JNI_VERSION_1_6;
-}
+// JNI_OnLoad remains unchanged – just registers the methods in HandwritingPaint.

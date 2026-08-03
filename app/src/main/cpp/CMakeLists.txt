@@ -24,7 +24,8 @@ add_library(
     handwriting_engine
     SHARED
     handwriting_engine.cpp
-    handwriting_jni.cpp          # <-- this must be present
+    handwriting_shaper.cpp      # new
+    handwriting_jni.cpp
 )
 # -----------------------------------------------------------------------------
 # NDK Libraries Setup

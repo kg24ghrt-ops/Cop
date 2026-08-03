@@ -1,43 +1,49 @@
 #include <jni.h>
 #include "handwriting_engine.h"
 
-extern "C" {
-
-JNIEXPORT void JNICALL
-Java_com_pot_cil_hj_ui_view_HandwritingPaint_00024Companion_nativeApplyEffects(
-    JNIEnv *env,
-    jclass /* clazz */,
+// ── The actual effect function (called via dynamic registration) ──
+static void nativeApplyEffectsImpl(
+    JNIEnv* env, jclass /*clazz*/,
     jobject byteBuffer,
-    jint width,
-    jint height,
-    jint stride,
-    jobject options
+    jint width, jint height, jint stride,
+    jfloat inkFeathering, jfloat edgeRoughness,
+    jboolean enableMistakes, jboolean performanceMode
 ) {
-    uint32_t *pixels = static_cast<uint32_t *>(env->GetDirectBufferAddress(byteBuffer));
+    uint32_t* pixels = static_cast<uint32_t*>(env->GetDirectBufferAddress(byteBuffer));
     if (pixels == nullptr) return;
 
-    jclass optionsClass = env->GetObjectClass(options);
-    if (optionsClass == nullptr) return;
+    HandwritingOptions opts;
+    opts.ink_feathering   = inkFeathering;
+    opts.edge_roughness   = edgeRoughness;
+    opts.enable_mistakes  = enableMistakes;
+    opts.performance_mode = performanceMode;
+    opts.seed             = 0;   // not used for now
 
-    auto getFloatField = [&](const char *name) -> float {
-        jfieldID field = env->GetFieldID(optionsClass, name, "F");
-        return field ? env->GetFloatField(options, field) : 0.0f;
-    };
-    auto getBooleanField = [&](const char *name) -> bool {
-        jfieldID field = env->GetFieldID(optionsClass, name, "Z");
-        return field ? env->GetBooleanField(options, field) : false;
-    };
-
-    HandwritingOptions nativeOpts;
-    nativeOpts.ink_feathering    = getFloatField("inkFeathering");
-    nativeOpts.edge_roughness    = getFloatField("edgeRoughness");
-    nativeOpts.enable_mistakes   = getBooleanField("enableMistakes");
-    nativeOpts.performance_mode  = getBooleanField("performanceMode");
-    nativeOpts.seed              = 0;   // not used in current passes
-
-    env->DeleteLocalRef(optionsClass);
-
-    applyHandwritingEffects(pixels, width, height, stride, nativeOpts);
+    applyHandwritingEffects(pixels, width, height, stride, opts);
 }
 
-} // extern "C"
+// ── Method descriptor table for dynamic registration ────────────
+static JNINativeMethod methods[] = {
+    {
+        const_cast<char*>("nativeApplyEffects"),                              // Kotlin method name
+        const_cast<char*>("(Ljava/nio/ByteBuffer;IIIFFZZ)V"),                // JNI type signature
+        reinterpret_cast<void*>(nativeApplyEffectsImpl)                     // C++ function pointer
+    }
+};
+
+// ── Register the native methods when the library loads ───────────
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+
+    jclass clazz = env->FindClass("com/pot/cil/hj/ui/view/HandwritingPaint");
+    if (clazz == nullptr) return JNI_ERR;
+
+    if (env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0])) < 0) {
+        return JNI_ERR;
+    }
+
+    return JNI_VERSION_1_6;
+}
